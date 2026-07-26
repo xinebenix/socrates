@@ -236,7 +236,10 @@ export function buildRequest(call: StructuredCall): Record<string, unknown> {
   return {
     model: call.model ?? model(),
     max_tokens: call.maxTokens ?? 16000,
-    system: call.system,
+    // The system prompt is byte-identical across every call to a given site, so it is
+    // worth caching. This is a smaller win than it sounds — output tokens are ~90% of
+    // the bill here — but it costs nothing and applies to every call.
+    system: [{ type: 'text', text: call.system, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: call.user }],
     output_config: {
       effort: call.effort ?? 'high',

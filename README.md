@@ -46,7 +46,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 145 tests, no network
+npm test          # 147 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -167,6 +167,16 @@ though it reads as mastered, because the failures above are the evidence that it
 fresh item, so a second visit is a second rep rather than the same question twice.
 Without this a fresh blueprint could never produce a session longer than it has nodes.
 
+**Items are generated in sets, one call per cell.** Nearly all of a generation's output
+is reasoning about the *cell* — what the node means, what a learner gets wrong, which
+distractors are live — and that work is identical for every item on it. A cell's whole
+buffer shortfall goes into one call, which roughly halves output tokens per item at four
+and produces better items, because the prompt can require that they differ from each
+other rather than generating them independently and hoping. **Validation does not
+amortize and must not:** every item gets its own blind solve from a call that has seen
+no other item and no key. A test asserts one generation call and N validations for a set
+of N.
+
 **Latency.** Generation plus validation is two sequential model calls and would feel
 slow inside a session. Three things keep it off the answer path: a background worker
 keeps at least three validated, unserved items ready per plausibly-due cell; planning a
@@ -263,7 +273,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 145 tests, no network, ~1.8s
+npm test                 # 147 tests, no network, ~1.8s
 npm run test:grader      # the grader regression set against the live model
 ```
 

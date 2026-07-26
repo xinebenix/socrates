@@ -39,6 +39,74 @@ const ASSUMED: Record<string, CallProfile> = {
   grade: { input: 2_000, output: 2_500 },
 };
 
+/**
+ * The split that makes amortization possible.
+ *
+ * A generation's output is reasoning about the *cell* followed by the item text. The
+ * reasoning — what this node means, what a learner gets wrong, which distractors are
+ * live — is identical for every item on that cell. Ask for four items and you pay it
+ * once. `body` is the part that scales.
+ */
+const OUTPUT_SPLIT = {
+  itemShallow: { reasoning: 2_000, body: 1_000 },
+  itemDeep: { reasoning: 3_000, body: 1_500 },
+};
+
+/* --------------------------------------------------------- structural levers */
+
+interface Levers {
+  /** Items requested per generation call. 1 = the original one-call-per-item. */
+  itemsPerCall: number;
+  /** Fraction of the system prompt's input tokens served from cache. */
+  cacheHitRate: number;
+  /** Share of generation done ahead of time, which can go through the Batch API. */
+  speculativeShare: number;
+  /** Batch API discount on those calls. 0 = not used. */
+  batchDiscount: number;
+  /** Validator output tokens. Mostly reasoning, so effort moves this directly. */
+  validateOutput: number;
+  /** Items generated per item served — buffer overshoot plus rejections. */
+  generationMultiplier: number;
+}
+
+const CURRENT: Levers = {
+  itemsPerCall: 3,
+  cacheHitRate: 0.9,
+  speculativeShare: 0,
+  batchDiscount: 0,
+  validateOutput: 2_500,
+  generationMultiplier: 1.4,
+};
+
+const BEFORE: Levers = {
+  itemsPerCall: 1,
+  cacheHitRate: 0,
+  speculativeShare: 0,
+  batchDiscount: 0,
+  validateOutput: 2_500,
+  generationMultiplier: 1.4,
+};
+
+/** Everything that ships today, tuned as far as the env vars allow. */
+const TUNED: Levers = {
+  itemsPerCall: 4,
+  cacheHitRate: 0.9,
+  speculativeShare: 0,
+  batchDiscount: 0,
+  validateOutput: 900,
+  generationMultiplier: 1.15,
+};
+
+/** Everything on the table, including the parts not built yet. */
+const AVAILABLE: Levers = {
+  itemsPerCall: 4,
+  cacheHitRate: 0.9,
+  speculativeShare: 0.8,
+  batchDiscount: 0.5,
+  validateOutput: 900,
+  generationMultiplier: 1.15,
+};
+
 /* ----------------------------------------------------------- usage profile */
 
 /**
@@ -143,6 +211,39 @@ function callCost(model: string, profile: CallProfile): number {
   return estimateUsd(model, profile.input, profile.output);
 }
 
+/** Cost of one generated item, with the levers applied. */
+function itemCost(
+  genModel: string,
+  validateModel: string,
+  tier: 'itemShallow' | 'itemDeep',
+  profiles: Record<string, CallProfile>,
+  lv: Levers
+): number {
+  const split = OUTPUT_SPLIT[tier];
+  const n = Math.max(1, lv.itemsPerCall);
+
+  // Reasoning and input are paid once per call and shared across n items.
+  const genOutputPerItem = split.reasoning / n + split.body;
+  const genInputPerItem = profiles[tier].input / n;
+  const cachedIn = genInputPerItem * lv.cacheHitRate;
+
+  const gen = estimateUsd(genModel, genInputPerItem, genOutputPerItem, cachedIn);
+
+  // Validation amortizes nothing: one blind solve per item, by design.
+  const val = estimateUsd(
+    validateModel,
+    profiles.validate.input,
+    lv.validateOutput,
+    profiles.validate.input * lv.cacheHitRate
+  );
+
+  const raw = gen + val;
+  // The Batch API halves whatever share of generation happens ahead of time. The
+  // pre-generation buffer is asynchronous by definition, so this costs no latency
+  // the user can feel — it is the cleanest discount available.
+  return raw * (1 - lv.speculativeShare * lv.batchDiscount);
+}
+
 interface Costed {
   strategy: Strategy;
   perItemShallow: number;
@@ -152,18 +253,20 @@ interface Costed {
   blueprintEach: number;
 }
 
-function cost(s: Strategy, profiles: Record<string, CallProfile>): Costed {
-  const perItemShallow =
-    callCost(s.itemShallow, profiles.itemShallow) + callCost(s.validateShallow, profiles.validate);
-  const perItemDeep =
-    callCost(s.itemDeep, profiles.itemDeep) + callCost(s.validateDeep, profiles.validate);
+function cost(
+  s: Strategy,
+  profiles: Record<string, CallProfile>,
+  lv: Levers = CURRENT
+): Costed {
+  const perItemShallow = itemCost(s.itemShallow, s.validateShallow, 'itemShallow', profiles, lv);
+  const perItemDeep = itemCost(s.itemDeep, s.validateDeep, 'itemDeep', profiles, lv);
 
   const shallowPerSession = MONTH.itemsPerSession * MONTH.shallowShare;
   const deepPerSession = MONTH.itemsPerSession * (1 - MONTH.shallowShare);
 
   const served = shallowPerSession * perItemShallow + deepPerSession * perItemDeep;
   const grading = MONTH.gradedPerSession * callCost(s.grade, profiles.grade);
-  const perSession = served * MONTH.generationMultiplier + grading;
+  const perSession = served * lv.generationMultiplier + grading;
 
   const blueprintEach = callCost(s.blueprint, profiles.blueprint);
   const perMonth =
@@ -324,6 +427,99 @@ async function main(): Promise<void> {
     console.log('  ' + '!'.repeat(96));
     console.log('');
   }
+
+  /* ---------------------------------------------- structural levers */
+
+  console.log('');
+  console.log('  Structural levers — same models, different architecture');
+  console.log('  ' + '='.repeat(96));
+  console.log('  Applied to split-gate. These change what a call costs, not what writes it.');
+  console.log('');
+
+  const baseline = TABLE.find((s) => s.name === 'split-gate')!;
+  const one = (patch: Partial<Levers>) => cost(baseline, profiles, { ...BEFORE, ...patch }).perMonth;
+  const beforeAll = one({});
+
+  const levers: [string, Partial<Levers>, string][] = [
+    ['items per call 1 -> 3', { itemsPerCall: 3 }, 'BUILT — shared reasoning paid once'],
+    ['items per call 1 -> 4', { itemsPerCall: 4 }, 'BUILT — set GYM_BUFFER_TARGET=4'],
+    ['prompt caching', { cacheHitRate: 0.9 }, 'BUILT — input is only ~10% of the bill'],
+    ['validator effort high -> low', { validateOutput: 900 }, 'GYM_EFFORT_VALIDATE=low'],
+    ['batch API on speculative', { speculativeShare: 0.8, batchDiscount: 0.5 }, 'NOT BUILT — 50% off'],
+    ['tighter buffer (1.4 -> 1.15)', { generationMultiplier: 1.15 }, 'GYM_LOOKAHEAD_CELLS / TARGET'],
+  ];
+
+  console.log('  ' + pad('Lever', 32) + padLeft('$/month', 11) + padLeft('saves', 9) + '   status');
+  console.log('  ' + '-'.repeat(96));
+  console.log('  ' + pad('(none — one call per item)', 32) + padLeft(usd(beforeAll), 11) + padLeft('—', 9));
+  for (const [label, patch, status] of levers) {
+    const m = one(patch);
+    console.log(
+      '  ' +
+        pad(label, 32) +
+        padLeft(usd(m), 11) +
+        padLeft(`-${((1 - m / beforeAll) * 100).toFixed(0)}%`, 9) +
+        '   ' +
+        status
+    );
+  }
+
+  const allLevers = cost(baseline, profiles, AVAILABLE).perMonth;
+  console.log('  ' + '-'.repeat(96));
+  console.log(
+    '  ' +
+      pad('ALL levers, split-gate models', 32) +
+      padLeft(usd(allLevers), 11) +
+      padLeft(`-${((1 - allLevers / beforeAll) * 100).toFixed(0)}%`, 9)
+  );
+
+  /* ------------------------------------------------ path to a target */
+
+  const target = Number(process.env.TARGET_USD ?? 20);
+  console.log('');
+  console.log(`  Reaching $${target}/month`);
+  console.log('  ' + '='.repeat(96));
+
+  console.log(
+    '  ' +
+      pad('strategy', 18) +
+      padLeft('default', 10) +
+      padLeft('tuned', 10) +
+      padLeft('+batch', 10) +
+      `    under $${target}?`
+  );
+  console.log('  ' + '-'.repeat(96));
+  for (const s of TABLE) {
+    const now = cost(s, profiles, CURRENT).perMonth;
+    const tuned = cost(s, profiles, TUNED).perMonth;
+    const best = cost(s, profiles, AVAILABLE).perMonth;
+    const verdict = tuned <= target ? 'yes, today' : best <= target ? 'needs batch API' : 'no';
+    console.log(
+      '  ' +
+        pad(s.name, 18) +
+        padLeft(usd(now), 10) +
+        padLeft(usd(tuned), 10) +
+        padLeft(usd(best), 10) +
+        '    ' +
+        verdict
+    );
+  }
+  console.log('');
+  console.log('  tuned  = GYM_BUFFER_TARGET=4 GYM_EFFORT_VALIDATE=low GYM_LOOKAHEAD_CELLS=6');
+  console.log('  +batch = the above, plus routing speculative generation through the Batch API');
+
+  console.log('');
+  console.log('  The fixed floor — paid regardless of how many items you answer:');
+  const floorStrategy = TABLE.find((s) => s.name === 'economy')!;
+  const bp =
+    callCost(floorStrategy.blueprint, profiles.blueprint) *
+    MONTH.concepts *
+    MONTH.blueprintsPerConcept;
+  const gr = callCost(floorStrategy.grade, profiles.grade) * MONTH.gradedPerSession * MONTH.sessions;
+  console.log(`    blueprints  ${usd(bp)}/mo      grading  ${usd(gr)}/mo      total ${usd(bp + gr)}`);
+  console.log('    At a $20 target these are a third of the budget, so they are the next');
+  console.log('    thing to look at — not the item pipeline.');
+  console.log('');
 
   console.log('  Price table used:');
   for (const [m, p] of Object.entries(DEFAULT_PRICES)) {

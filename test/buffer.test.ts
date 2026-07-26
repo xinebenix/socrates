@@ -125,6 +125,73 @@ describe('topUpBuffer', () => {
     expect(first?.cell_id).toBe(target.id);
   });
 
+  it('fills a cell to its target in ONE generation call, not one per item', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const target = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    await topUpBuffer(db, conceptId, {
+      priorityCellIds: [target.id],
+      target: 3,
+      maxGenerations: 3,
+      concurrency: 1,
+    });
+
+    const generations = handle.calls.filter((c) => c.kind === 'item-mc');
+    const validations = handle.calls.filter((c) => c.kind === 'validate');
+
+    // This is the whole economic argument: the reasoning about a cell is paid once
+    // however many items come out of it. If this ever reads 3, the amortization is
+    // gone and item cost has roughly doubled.
+    expect(generations).toHaveLength(1);
+
+    // Validation, by contrast, must NOT amortize — every item gets its own blind
+    // solve, by a call that has seen no other item. That is invariant 3.
+    expect(validations).toHaveLength(3);
+
+    const stored = db
+      .prepare(`SELECT COUNT(*) AS n FROM items WHERE cell_id = ? AND validated = 1`)
+      .get(target.id) as { n: number };
+    expect(stored.n).toBe(3);
+  });
+
+  it('asks for exactly the shortfall, not the whole target', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const target = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    await topUpBuffer(db, conceptId, {
+      priorityCellIds: [target.id],
+      target: 2,
+      maxGenerations: 2,
+      concurrency: 1,
+    });
+    const firstRound = handle.calls.filter((c) => c.kind === 'item-mc').length;
+
+    // Two are banked; asking for three should generate one, not three.
+    await topUpBuffer(db, conceptId, {
+      priorityCellIds: [target.id],
+      target: 3,
+      maxGenerations: 1,
+      concurrency: 1,
+    });
+
+    const asked = handle.calls
+      .filter((c) => c.kind === 'item-mc')
+      .slice(firstRound)
+      .map((c) => /<how_many>(\d+)<\/how_many>/.exec(String((c.request.messages as { content: string }[])[0].content))?.[1]);
+
+    expect(asked).toEqual(['1']);
+  });
+
   it('generates nothing when every cell already holds the target', async () => {
     const { db, conceptId } = makeFixture(3);
     const { handle, handler } = makeFakeLlm();

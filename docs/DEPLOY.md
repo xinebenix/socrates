@@ -400,6 +400,75 @@ quality under you. Just do not expect a discount, and verify both prices against
 billing page before planning around it. The script prints a warning when two models in a
 comparison share a price.
 
+### Structural changes — cheaper without changing models
+
+Model choice is the obvious dial and the least interesting one. **90% of the bill is
+output tokens**, and deep items are 67% of spend at 25% of volume — so what matters is
+output tokens per *served* item.
+
+**Items are generated in sets.** A generation's output is reasoning about the *cell* —
+what this node means, what a learner gets wrong, which distractors are live — followed
+by the item text. That reasoning is identical for every item on the same cell, and
+paying for it once per item was the largest avoidable cost in the system. A cell's whole
+shortfall now goes into one call. At four items that is roughly **half the output tokens
+per item**, and it makes the items better: the prompt can require that they differ from
+each other, which is a stronger guarantee than generating four independently and hoping.
+
+**Validation deliberately does not amortize.** Each item still gets its own blind solve
+from a call that has seen no other item and no key. That is invariant 3, and it is what
+makes a cheaper generator safe. There is a test asserting one generation call and N
+validation calls for a set of N.
+
+A note on a tempting idea that does not work: *sampling* validation — checking only a
+fraction of items — is strictly worse than downgrading the validator. For the same
+money, a cheaper model checking 100% beats an expensive model checking 40%, because the
+failure mode of sampling is *no gate at all* on the rest. It is not implemented for
+that reason.
+
+What each lever is worth, on `split-gate`, from `npx tsx scripts/cost-model.ts`:
+
+| Lever | $/mo | saves | |
+|---|---|---|---|
+| *(none — one call per item)* | $128 | — | how it used to work |
+| items per call → 4 | $89 | −31% | **built** |
+| prompt caching | $118 | −8% | **built** — input is only ~10% of the bill |
+| validator effort → low | $101 | −21% | `GYM_EFFORT_VALIDATE=low` |
+| tighter buffer | $107 | −17% | `GYM_LOOKAHEAD_CELLS` / `GYM_BUFFER_TARGET` |
+| Batch API on speculative | $80 | −38% | **not built** — see below |
+| **all of them** | **$32** | **−75%** | |
+
+**The Batch API is the biggest thing still on the table.** It is 50% off, and the
+pre-generation buffer is asynchronous by definition — nothing about filling a buffer
+needs a synchronous response, so this discount costs no latency anyone can feel. It
+needs submit/poll/retrieve machinery the app does not have yet.
+
+### Reaching $20/month
+
+| `GYM_STRATEGY` | default | tuned | + batch | under $20? |
+|---|---|---|---|---|
+| `reference` | $195 | $99 | $63 | no |
+| `shipped` | $152 | $68 | $44 | no |
+| `split-gate` | $88 | $48 | $32 | no |
+| `sonnet-gate` | $66 | $42 | $28 | no |
+| **`economy`** | $38 | **$21** | **$15** | needs the Batch API |
+| `floor` | $34 | **$17** | $12 | yes, today |
+
+*tuned* = `GYM_BUFFER_TARGET=4 GYM_EFFORT_VALIDATE=low GYM_LOOKAHEAD_CELLS=6`
+
+The honest answer: **$20 needs both** the structural work and a mid-tier model strategy.
+Structure alone takes `split-gate` from $128 to $32 — a 4× improvement — but not to $20.
+
+The configuration I would actually run is `economy` + tuned, at about $21 today and $15
+once batching exists. It keeps **Opus on the blueprint and on the grader** — the two
+places where a shortcut compounds or breaks an invariant — and moves item writing and
+validation down. `floor` is under $20 today but gives up the uncharitable grader, which
+is invariant 9, and I would not.
+
+One thing that shows up only at this budget: the **fixed floor** is about $7.50/month
+(blueprints $3.15, D6 grading $4.35) regardless of how many items you answer. At $200 that
+is noise; at $20 it is a third of the budget. Past this point the item pipeline is no
+longer where the money is.
+
 ### Making it cheaper
 
 In rough order of savings per unit of regret:

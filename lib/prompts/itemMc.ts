@@ -14,6 +14,16 @@ export interface McItemInput {
   activeMisconceptionLabels: string[];
   /** Set when a prior attempt produced a dead distractor we are asking to be replaced. */
   deadDistractorNote?: string | null;
+  /**
+   * How many items to write in this one call. Default 1.
+   *
+   * The reasoning a model does before writing an item is mostly about the *node* —
+   * what it means, what a learner gets wrong about it, which distractors are live.
+   * That work is identical for every item on the same cell, and paying for it once
+   * per item was the largest avoidable cost in the system. Asking for a set amortizes
+   * it: roughly half the output tokens per item at four.
+   */
+  count?: number;
 }
 
 export interface McOptionOut {
@@ -27,6 +37,10 @@ export interface McItemOut {
   stem: string;
   options: McOptionOut[];
   explanation: string;
+}
+
+export interface McItemSetOut {
+  items: McItemOut[];
 }
 
 export const MC_ITEM_SCHEMA: JsonSchema = {
@@ -59,8 +73,18 @@ export const MC_ITEM_SCHEMA: JsonSchema = {
   },
 };
 
-const SYSTEM = `Write one multiple-choice item testing the given node at the given depth. Exactly 4
-options, exactly one correct.
+/** One item, wrapped. The set schema below is what actually goes over the wire. */
+export const MC_ITEM_SET_SCHEMA: JsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['items'],
+  properties: {
+    items: { type: 'array', items: MC_ITEM_SCHEMA },
+  },
+};
+
+const SYSTEM = `Write multiple-choice items testing the given node at the given depth. Each item has
+exactly 4 options, exactly one correct.
 
 Every incorrect option must be tagged to one of the supplied misconceptions and must
 be the answer a learner holding *that specific belief* would choose. Do not invent
@@ -84,6 +108,13 @@ Do not reproduce or lightly paraphrase any of the recent stems supplied. Vary th
 surface form — case-based, comparative, negative-stem, applied — while testing the
 same underlying cell.
 
+When asked for more than one item, the items must differ from each other as much as
+they differ from the recent stems. Attack the node from a different angle in each one
+and lead with a different misconception. Two items that test the same fact in
+different words are one item and a wasted rep — the learner will be shown these on
+separate days as if they were independent evidence, and near-duplicates make a
+shallow grasp look like a durable one.
+
 \`rationale\` for each option: for the correct one, why it is correct; for each
 distractor, the specific belief it reflects and precisely where that belief goes
 wrong. These are shown to the learner and carry most of the instructional value.
@@ -91,10 +122,16 @@ wrong. These are shown to the learner and carry most of the instructional value.
 \`explanation\` covers the correct answer and the idea behind it in two to four
 sentences. It is shown after answering, alongside the per-option rationales.
 
-Set \`misconception_label\` to null on the correct option and only on the correct option.`;
+Set \`misconception_label\` to null on the correct option and only on the correct option.
+
+Return \`items\` with exactly as many items as \`how_many\` asks for.`;
+
+/** How many items one generation call may be asked for. */
+export const MAX_ITEMS_PER_CALL = 6;
 
 export function buildMcItemCall(input: McItemInput): StructuredCall {
   const d = depth(input.depthLevel);
+  const count = Math.max(1, Math.min(input.count ?? 1, MAX_ITEMS_PER_CALL));
 
   const bank = input.misconceptions.length
     ? input.misconceptions.map((m) => `- ${m.label}: ${m.description}`).join('\n')
@@ -122,11 +159,13 @@ export function buildMcItemCall(input: McItemInput): StructuredCall {
       `<depth>${d.short} — ${d.name}: ${d.definition}</depth>\n\n` +
       `<source_excerpt>\n${input.sourceExcerpt || '(no source material available for this node)'}\n</source_excerpt>\n\n` +
       `<misconception_bank>\n${bank}\n</misconception_bank>\n\n` +
-      `<recent_stems>\n${recent}\n</recent_stems>` +
+      `<recent_stems>\n${recent}\n</recent_stems>\n\n` +
+      `<how_many>${count}</how_many>` +
       active +
       deadNote,
-    schema: MC_ITEM_SCHEMA,
-    maxTokens: 8000,
+    schema: MC_ITEM_SET_SCHEMA,
+    // The item bodies scale with the count; the reasoning ahead of them does not.
+    maxTokens: 6000 + 3000 * count,
     effort: effortFor('item'),
     model: modelFor('item', input.depthLevel),
   };

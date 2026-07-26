@@ -66,39 +66,44 @@ export function makeFakeLlm(opts: FakeOptions = {}): {
       }
 
       case 'item-mc': {
-        handle.generations++;
-        const n = handle.generations;
-        const stem = opts.stem ? opts.stem(n) : defaultStem(n);
-        return JSON.stringify({
-          stem,
-          options: [
-            {
-              text: `${CORRECT_MARK} The socialized-ownership reading, variant ${n}`,
-              is_correct: true,
-              misconception_label: null,
-              rationale: 'This is what the source actually says about ownership.',
-            },
-            {
-              text: `The state-title reading, variant ${n}`,
-              is_correct: false,
-              misconception_label: 'state ownership = social ownership',
-              rationale: 'Conflates a government holding title with society holding it.',
-            },
-            {
-              text: `The redistribution reading, variant ${n}`,
-              is_correct: false,
-              misconception_label: 'socialism = redistribution',
-              rationale: 'Mistakes a transfer of income for a change in ownership.',
-            },
-            {
-              text: `The central-planning reading, variant ${n}`,
-              is_correct: false,
-              misconception_label: 'socialism requires central planning',
-              rationale: 'Treats one allocation mechanism as definitional.',
-            },
-          ],
-          explanation: `Ownership, not administration, is the distinguishing feature. (variant ${n})`,
+        // The real generator writes a set in one call, so the fake honours how_many —
+        // otherwise the pipeline's set handling would never be exercised.
+        const asked = Number(/<how_many>(\d+)<\/how_many>/.exec(userText(request))?.[1] ?? 1);
+        const items = Array.from({ length: Math.max(1, asked) }, () => {
+          handle.generations++;
+          const n = handle.generations;
+          return {
+            stem: opts.stem ? opts.stem(n) : defaultStem(n),
+            options: [
+              {
+                text: `${CORRECT_MARK} The socialized-ownership reading, variant ${n}`,
+                is_correct: true,
+                misconception_label: null,
+                rationale: 'This is what the source actually says about ownership.',
+              },
+              {
+                text: `The state-title reading, variant ${n}`,
+                is_correct: false,
+                misconception_label: 'state ownership = social ownership',
+                rationale: 'Conflates a government holding title with society holding it.',
+              },
+              {
+                text: `The redistribution reading, variant ${n}`,
+                is_correct: false,
+                misconception_label: 'socialism = redistribution',
+                rationale: 'Mistakes a transfer of income for a change in ownership.',
+              },
+              {
+                text: `The central-planning reading, variant ${n}`,
+                is_correct: false,
+                misconception_label: 'socialism requires central planning',
+                rationale: 'Treats one allocation mechanism as definitional.',
+              },
+            ],
+            explanation: `Ownership, not administration, is the distinguishing feature. (variant ${n})`,
+          };
         });
+        return JSON.stringify({ items });
       }
 
       case 'item-free': {
@@ -195,8 +200,16 @@ function classify(request: Record<string, unknown>): string {
   if (props.includes('nodes')) return 'blueprint';
   if (props.includes('criteria')) return 'grade';
   if (props.includes('rubric')) return 'item-free';
+  // MC generation now returns a set: { items: [...] }.
+  if (props.includes('items')) return 'item-mc';
   if (props.includes('options')) return 'item-mc';
   return 'unknown';
+}
+
+/** The user turn, for the fake to read how_many out of. */
+function userText(request: Record<string, unknown>): string {
+  const messages = request.messages as { content: string }[] | undefined;
+  return String(messages?.[0]?.content ?? '');
 }
 
 /** Locate the keyed option in the validator payload by its marker. */

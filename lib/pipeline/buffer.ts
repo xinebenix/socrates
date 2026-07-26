@@ -19,7 +19,7 @@
 import type { Db } from '../db';
 import { countBufferedItems } from '../db/queries';
 import { plausiblyDueCells } from '../stats';
-import { generateItemForCell } from './generateItem';
+import { generateItemsForCell } from './generateItem';
 
 export function bufferTarget(): number {
   const raw = Number(process.env.GYM_BUFFER_TARGET);
@@ -96,24 +96,32 @@ export async function topUpBuffer(
 
   // Choosing what is short is a synchronous pass that completes before any generation
   // starts, so the concurrent fills below cannot race each other's counts.
-  const short: number[] = [];
+  //
+  // A cell's whole shortfall goes into ONE call. The reasoning a generation does before
+  // writing an item is about the cell, not the item, so filling a cell three-deep in
+  // one call costs far less than three calls — see generateMcItems.
+  const short: { cellId: number; want: number }[] = [];
+  let budgeted = 0;
   for (const cellId of ordered) {
-    if (short.length >= maxGenerations) break;
-    if (countBufferedItems(db, cellId, 'mc') >= target) {
+    if (budgeted >= maxGenerations) break;
+    const have = countBufferedItems(db, cellId, 'mc');
+    if (have >= target) {
       report.skipped++;
       continue;
     }
-    short.push(cellId);
+    const want = Math.min(target - have, maxGenerations - budgeted);
+    short.push({ cellId, want });
+    budgeted += want;
   }
 
   await pooled(
-    short.map((cellId) => async () => {
+    short.map(({ cellId, want }) => async () => {
       try {
-        const outcome = await generateItemForCell(db, cellId);
-        if (outcome.item) report.generated++;
-        else report.failed++;
+        const outcome = await generateItemsForCell(db, cellId, want);
+        report.generated += outcome.items.length;
+        if (outcome.items.length < want) report.failed += want - outcome.items.length;
       } catch {
-        report.failed++;
+        report.failed += want;
       }
     }),
     opts.concurrency ?? bufferConcurrency()

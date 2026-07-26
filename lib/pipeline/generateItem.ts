@@ -8,7 +8,7 @@
 import type { Db } from '../db';
 import { iso, now } from '../clock';
 import { structured } from '../llm/client';
-import { buildMcItemCall, type McItemOut } from '../prompts/itemMc';
+import { buildMcItemCall, type McItemOut, type McItemSetOut } from '../prompts/itemMc';
 import { buildFreeItemCall, type FreeItemOut } from '../prompts/itemFree';
 import { buildValidationCall, gate } from '../prompts/validate';
 import { tooSimilar } from '../analysis/similarity';
@@ -39,21 +39,44 @@ export interface GenerationOutcome {
 }
 
 export async function generateItemForCell(db: Db, cellId: number): Promise<GenerationOutcome> {
+  const outcome = await generateItemsForCell(db, cellId, 1);
+  return { ...outcome, item: outcome.items[0] ?? null };
+}
+
+/**
+ * Fill one cell with up to `want` items.
+ *
+ * D6 is free-response and generated singly: there is one D6 item per session, so
+ * there is nothing to amortize and the cell is never filled deep.
+ */
+export async function generateItemsForCell(
+  db: Db,
+  cellId: number,
+  want = 1
+): Promise<SetGenerationOutcome> {
   const cell = getCell(db, cellId);
-  if (!cell) return fail('cell not found');
+  if (!cell) return { ...fail('cell not found'), items: [] };
 
   const started = Date.now();
-  const outcome =
-    cell.depth === 6 ? await generateFreeItem(db, cellId) : await generateMcItem(db, cellId);
+  const outcome: SetGenerationOutcome =
+    cell.depth === 6
+      ? await (async () => {
+          const one = await generateFreeItem(db, cellId);
+          return { ...one, items: one.item ? [one.item] : [] };
+        })()
+      : await generateMcItems(db, cellId, Math.max(1, want));
 
-  // Two model calls per attempt, so a slow cell is usually a cell that is being
-  // regenerated — the attempt count is the part worth seeing next to the duration.
-  logEvent(db, outcome.item ? 'info' : 'warn', 'generate.timing', {
+  // The per-item figure is what to compare across settings — a set of four in one
+  // call should land far below four times a single.
+  logEvent(db, outcome.items.length > 0 ? 'info' : 'warn', 'generate.timing', {
     cellId,
     depth: cell.depth,
     ms: Date.now() - started,
+    msPerItem: outcome.items.length ? Math.round((Date.now() - started) / outcome.items.length) : null,
     attempts: outcome.attempts,
-    ok: Boolean(outcome.item),
+    wanted: want,
+    produced: outcome.items.length,
+    ok: outcome.items.length > 0,
   });
 
   return outcome;
@@ -62,18 +85,48 @@ export async function generateItemForCell(db: Db, cellId: number): Promise<Gener
 /* --------------------------------------------------------------- MC (D1-D5) */
 
 export async function generateMcItem(db: Db, cellId: number): Promise<GenerationOutcome> {
+  const outcome = await generateMcItems(db, cellId, 1);
+  return { ...outcome, item: outcome.items[0] ?? null };
+}
+
+export interface SetGenerationOutcome extends Omit<GenerationOutcome, 'item'> {
+  items: ItemRow[];
+}
+
+/**
+ * Generate up to `want` items for one cell.
+ *
+ * The economics: nearly all of a generation's output tokens are the reasoning that
+ * happens *before* the item — working out what the node means, what a learner gets
+ * wrong about it, which distractors are live. That work is identical for every item
+ * on the same cell, and doing it once per item was the single largest avoidable cost
+ * in the system. Asking for four items in one call pays it once.
+ *
+ * Validation does not amortize and must not: each item gets its own blind solve, by
+ * a call that has seen no other item and no key. That is invariant 3, and it is the
+ * reason a cheaper generator is safe.
+ */
+export async function generateMcItems(
+  db: Db,
+  cellId: number,
+  want: number
+): Promise<SetGenerationOutcome> {
   const ctx = loadContext(db, cellId);
-  if (!ctx) return fail('cell not found');
+  if (!ctx) return { ...fail('cell not found'), items: [] };
 
   const previous = recentStems(db, cellId, RECENT_STEMS_MC);
-  const rejections: GenerationOutcome['rejections'] = [];
+  const rejections: SetGenerationOutcome['rejections'] = [];
+  const accepted: ItemRow[] = [];
+  const acceptedStems: string[] = [];
   let deadDistractorNote: string | null = null;
   let attempts = 0;
 
   for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
     attempts = attempt;
+    const shortfall = want - accepted.length;
+    if (shortfall <= 0) break;
 
-    const generated = await structured<McItemOut>(
+    const generated = await structured<McItemSetOut>(
       buildMcItemCall({
         nodeTitle: ctx.node.title,
         nodeDescription: ctx.node.description,
@@ -83,80 +136,112 @@ export async function generateMcItem(db: Db, cellId: number): Promise<Generation
           label: m.label,
           description: m.description,
         })),
-        recentStems: previous,
+        // Items accepted earlier in this same call count as recent, so a retry does
+        // not quietly reproduce one we already kept.
+        recentStems: [...acceptedStems, ...previous],
         activeMisconceptionLabels: ctx.activeLabels,
         deadDistractorNote,
+        count: shortfall,
       })
     );
-    const gen: McItemOut = generated.data;
 
-    const shapeProblem = checkMcShape(gen);
-    if (shapeProblem) {
-      rejections.push({ reasons: [shapeProblem], verdict: emptyVerdict() });
+    const candidates = generated.data.items ?? [];
+    if (candidates.length === 0) {
+      rejections.push({ reasons: ['generator returned no items'], verdict: emptyVerdict() });
       continue;
     }
 
-    // Invariant 6, enforced rather than requested.
-    if (tooSimilar(gen.stem, previous)) {
-      rejections.push({ reasons: ['stem too similar to a recent item'], verdict: emptyVerdict() });
-      continue;
+    // Cheap checks first, so nothing malformed reaches a paid validation call.
+    const viable: McItemOut[] = [];
+    for (const gen of candidates) {
+      const shapeProblem = checkMcShape(gen);
+      if (shapeProblem) {
+        rejections.push({ reasons: [shapeProblem], verdict: emptyVerdict() });
+        continue;
+      }
+      // Invariant 6, enforced rather than requested — against recent stems, against
+      // what this call already produced, and against what earlier attempts kept.
+      if (tooSimilar(gen.stem, [...acceptedStems, ...previous, ...viable.map((v) => v.stem)])) {
+        rejections.push({
+          reasons: ['stem too similar to a recent item'],
+          verdict: emptyVerdict(),
+        });
+        continue;
+      }
+      viable.push(gen);
     }
 
-    // Invariant 3: a separate call that independently solves the item, with no
-    // sight of the key. Options go over in randomized order.
-    const order = shuffledIndices(gen.options.length);
-    const shownTexts = order.map((i) => gen.options[i].text);
-    const keyedIndex = gen.options.findIndex((o) => o.is_correct);
-    const keyedPosition = order.indexOf(keyedIndex) + 1;
+    // One blind validation per surviving item, in sequence.
+    //
+    // Fanning these out would be faster, but the caller's concurrency limit counts
+    // model calls in flight and exists to stay under an account rate limit — a cell
+    // that quietly issued four parallel calls inside one "slot" would make that limit
+    // a fiction. Parallelism comes from the cell dimension instead, where the buffer
+    // controls it explicitly.
+    const verdicts: {
+      gen: McItemOut;
+      order: number[];
+      verdict: ValidatorVerdict;
+      keyedPosition: number;
+    }[] = [];
 
-    const validated = await structured<ValidatorVerdict>(
-      buildValidationCall({
-        stem: gen.stem,
-        optionTexts: shownTexts,
-        nodeDescription: ctx.node.description,
-        sourceExcerpt: ctx.excerpt,
-        // Model selection only — never reaches the prompt. See ValidationInput.
-        depth: ctx.cell.depth,
-      })
-    );
-    const verdict: ValidatorVerdict = validated.data;
+    for (const gen of viable) {
+      const order = shuffledIndices(gen.options.length);
+      const shownTexts = order.map((i) => gen.options[i].text);
+      const keyedIndex = gen.options.findIndex((o) => o.is_correct);
+      const keyedPosition = order.indexOf(keyedIndex) + 1;
 
-    const result = gate(verdict, keyedPosition);
-
-    if (result.regenerateOption && attempt < MAX_GENERATION_ATTEMPTS) {
-      // A dead_distractor alone does not block, but it earns one regeneration
-      // attempt of that option before we accept the item.
-      deadDistractorNote = verdict.notes || 'one option was judged implausible';
-      rejections.push({ reasons: ['dead_distractor — regenerating once'], verdict });
-      continue;
+      const validated = await structured<ValidatorVerdict>(
+        buildValidationCall({
+          stem: gen.stem,
+          optionTexts: shownTexts,
+          nodeDescription: ctx.node.description,
+          sourceExcerpt: ctx.excerpt,
+          // Model selection only — never reaches the prompt. See ValidationInput.
+          depth: ctx.cell.depth,
+        })
+      );
+      verdicts.push({ gen, order, verdict: validated.data, keyedPosition });
     }
 
-    if (!result.pass && !result.regenerateOption) {
-      rejections.push({ reasons: result.reasons, verdict });
-      logRejection(db, cellId, verdict, result.reasons);
-      continue;
-    }
+    const lastAttempt = attempt === MAX_GENERATION_ATTEMPTS;
 
-    // Passed, or a dead_distractor that recurred — serve it and record the flag.
-    const item = persistMcItem(db, {
-      cellId,
-      nodeId: ctx.node.id,
-      gen,
-      order,
-      verdict,
-    });
-    return { item, attempts, rejections, error: null };
+    for (const { gen, order, verdict, keyedPosition } of verdicts) {
+      if (accepted.length >= want) break;
+      const result = gate(verdict, keyedPosition);
+
+      if (result.regenerateOption && !lastAttempt) {
+        // A dead distractor alone does not block, but it earns one regeneration
+        // of that option before the item is accepted.
+        deadDistractorNote = verdict.notes || 'one option was judged implausible';
+        rejections.push({ reasons: ['dead_distractor — regenerating once'], verdict });
+        continue;
+      }
+
+      if (!result.pass && !result.regenerateOption) {
+        rejections.push({ reasons: result.reasons, verdict });
+        logRejection(db, cellId, verdict, result.reasons);
+        continue;
+      }
+
+      accepted.push(persistMcItem(db, { cellId, nodeId: ctx.node.id, gen, order, verdict }));
+      acceptedStems.push(gen.stem);
+    }
   }
 
-  const error = `generation failed after ${attempts} attempts`;
-  logEvent(db, 'warn', 'generate.mc_failed', {
-    cellId,
-    node: ctx.node.title,
-    depth: ctx.cell.depth,
-    attempts,
-    reasons: rejections.flatMap((r) => r.reasons),
-  });
-  return { item: null, attempts, rejections, error };
+  if (accepted.length === 0) {
+    const error = `generation failed after ${attempts} attempts`;
+    logEvent(db, 'warn', 'generate.mc_failed', {
+      cellId,
+      node: ctx.node.title,
+      depth: ctx.cell.depth,
+      attempts,
+      reasons: rejections.flatMap((r) => r.reasons),
+    });
+    return { items: [], attempts, rejections, error };
+  }
+
+  return { items: accepted, attempts, rejections, error: null };
 }
 
 function checkMcShape(gen: McItemOut): string | null {
