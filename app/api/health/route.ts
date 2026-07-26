@@ -11,6 +11,7 @@ import { listConcepts } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
 import { batchingEnabled } from '@/lib/llm/batch';
 import {
+  billingSplit,
   budgetStatus,
   dayKey,
   spendBy,
@@ -148,6 +149,9 @@ export async function GET(req: Request) {
       byKind: spendBy(db, 'kind', dayKey(-29)),
       byModel: spendBy(db, 'model', dayKey(-29)),
       aheadOfUse: unservedItemSpend(db),
+      // Proof, or the absence of it. batchShare near 0 after real use means the
+      // speculative pipeline is not going through the Batch API at all.
+      billing: billingSplit(db, dayKey(-29)),
     };
 
     // The half-price pipeline: open batches mean the worker is waiting on the

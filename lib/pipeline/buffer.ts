@@ -21,6 +21,8 @@ import { countBufferedItems } from '../db/queries';
 import { plausiblyDueCells } from '../stats';
 import { MAX_ITEMS_PER_CALL } from '../prompts/itemMc';
 import { generateItemsForCell } from './generateItem';
+import { cellsInFlight } from './batchFill';
+import { logEvent } from '../ops';
 
 /**
  * Validated, unserved items kept ready per plausibly-due cell — and, because a cell's
@@ -190,6 +192,8 @@ export async function topUpBuffer(
     concurrency?: number;
     /** Filled first. The session runner is about to want exactly these. */
     priorityCellIds?: number[];
+    /** Cells to leave alone. Defaults to whatever a batch is already generating. */
+    exclude?: Set<number>;
   } = {}
 ): Promise<TopUpReport> {
   const target = opts.target ?? bufferTarget();
@@ -209,7 +213,13 @@ export async function topUpBuffer(
   // A cell's whole shortfall goes into ONE call. The reasoning a generation does before
   // writing an item is about the cell, not the item, so filling a cell three-deep in
   // one call costs far less than three calls — see generateMcItems.
-  const { short, skipped } = computeShortfalls(db, ordered, { target, maxGenerations });
+  const { short, skipped } = computeShortfalls(db, ordered, {
+    target,
+    maxGenerations,
+    // A cell whose items are already being written in a batch must not be written
+    // again synchronously — that is the same items paid for twice.
+    exclude: opts.exclude ?? cellsInFlight(db),
+  });
   report.skipped += skipped;
 
   await pooled(
@@ -228,16 +238,106 @@ export async function topUpBuffer(
   return report;
 }
 
+/* ------------------------------------------------- serving a session vs depth */
+
 /**
- * Fire-and-forget top-up, called after an item is served so the buffer refills while
- * the user is reading. Failures are swallowed on purpose — a generation error must
- * never take down the answer path.
+ * Two different jobs used to share this file, and conflating them is what made
+ * generation fire after every single answered item.
+ *
+ *   **Making a session servable** is latency-critical, synchronous, and *small*: the
+ *   plan needs one item per slot and not one more. Nobody can train without it.
+ *
+ *   **Building depth toward GYM_BUFFER_TARGET** is speculative, batched, and half
+ *   price. Nobody is waiting on it, so the worker owns it entirely.
+ *
+ * The bug was that the first job filled each cell to exactly 1, and the second job's
+ * low-water mark then read every one of those cells as depleted — because 1 is below
+ * 40% of any target above 2. So answering one question triggered a synchronous refill
+ * of every planned cell toward the full target. The hysteresis was working; it was
+ * being handed a buffer that the warm pass had guaranteed would look empty.
+ *
+ * Now the session path only ever fills to what the plan needs, and never touches the
+ * target. Depth is the worker's business.
  */
-export function topUpInBackground(db: Db, conceptId: number, priorityCellIds?: number[]): void {
-  void topUpBuffer(db, conceptId, {
-    maxGenerations: Math.max(4, bufferTarget()),
-    priorityCellIds,
-  }).catch(() => {});
+
+/** How many items each cell needs for the remaining plan. Cells may repeat. */
+export function planNeed(cellIds: number[]): Map<number, number> {
+  const need = new Map<number, number>();
+  for (const id of cellIds) need.set(id, (need.get(id) ?? 0) + 1);
+  return need;
+}
+
+/**
+ * Generate exactly what the given plan slots require and nothing else.
+ *
+ * A cell appearing twice in the plan needs two items; one appearing once needs one.
+ * Filling to GYM_BUFFER_TARGET here would spend on a session that has not happened
+ * yet while the user waits for the first question.
+ */
+export async function fillSessionNeed(
+  db: Db,
+  conceptId: number,
+  cellIds: number[],
+  opts: { maxGenerations?: number; concurrency?: number } = {}
+): Promise<TopUpReport> {
+  const report: TopUpReport = { generated: 0, failed: 0, skipped: 0 };
+  const inFlight = cellsInFlight(db);
+  const maxGenerations = opts.maxGenerations ?? 12;
+
+  const short: { cellId: number; want: number }[] = [];
+  let budgeted = 0;
+
+  for (const [cellId, needed] of planNeed(cellIds)) {
+    if (budgeted >= maxGenerations) break;
+    // A cell already being generated in a batch must not be generated again here:
+    // that is the same items bought twice.
+    if (inFlight.has(cellId)) {
+      report.skipped++;
+      continue;
+    }
+    const want = needed - countBufferedItems(db, cellId, 'mc');
+    if (want <= 0) {
+      report.skipped++;
+      continue;
+    }
+    short.push({ cellId, want });
+    budgeted += want;
+  }
+
+  if (short.length === 0) return report;
+
+  logEvent(db, 'info', 'buffer.session_fill', {
+    conceptId,
+    cells: short.length,
+    items: budgeted,
+  });
+
+  await pooled(
+    short.map(({ cellId, want }) => async () => {
+      try {
+        const outcome = await generateItemsForCell(db, cellId, want);
+        report.generated += outcome.items.length;
+        if (outcome.items.length < want) report.failed += want - outcome.items.length;
+      } catch {
+        report.failed += want;
+      }
+    }),
+    opts.concurrency ?? bufferConcurrency()
+  );
+
+  return report;
+}
+
+/**
+ * Fire-and-forget. Called after an item is served, covering only the slots still
+ * ahead in this session — so a session that is already fully covered generates
+ * nothing at all, which is the common case once the plan has been warmed.
+ *
+ * Failures are swallowed on purpose: a generation error must never take down the
+ * answer path.
+ */
+export function topUpInBackground(db: Db, conceptId: number, planCellIds: number[]): void {
+  void fillSessionNeed(db, conceptId, planCellIds).catch(() => {});
 }
 
 /**
@@ -248,13 +348,5 @@ export function topUpInBackground(db: Db, conceptId: number, priorityCellIds?: n
  * to prefer these cells anyway.
  */
 export function warmSessionPlan(db: Db, conceptId: number, cellIds: number[]): void {
-  const unique = [...new Set(cellIds)];
-  void topUpBuffer(db, conceptId, {
-    priorityCellIds: unique,
-    // One item for each planned cell is what this session actually needs; the worker
-    // deepens them afterwards. Filling to the full target here would delay the first
-    // item to buy items for a session that has not started.
-    target: 1,
-    maxGenerations: Math.min(unique.length, 10),
-  }).catch(() => {});
+  void fillSessionNeed(db, conceptId, cellIds).catch(() => {});
 }

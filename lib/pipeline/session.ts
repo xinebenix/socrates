@@ -182,8 +182,11 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
     markItemServed(db, item.id);
 
     const node = getNode(db, cell.node_id);
-    // Refill while the user reads this one, preferring the cells still ahead in this
-    // session over whatever else in the concept happens to be plausibly due.
+    // Cover the slots still ahead in this session, and nothing beyond them. Once the
+    // plan was warmed at session start this finds nothing short and generates nothing
+    // — which is the point. Building depth toward GYM_BUFFER_TARGET is the worker's
+    // job, done in batches at half price, not something an answered question triggers.
+    // The repeats in `plan` are meaningful: a cell serving two slots needs two items.
     if (node) {
       topUpInBackground(
         db,

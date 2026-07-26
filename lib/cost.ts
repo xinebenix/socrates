@@ -212,6 +212,61 @@ export function totalSpend(db: Db, sinceDay?: string): SpendRow {
   );
 }
 
+/**
+ * Batch versus synchronous spend, so "is the discount actually landing" is a question
+ * with an answer rather than an opinion. If batchCalls is 0 after a day of use, the
+ * batch path is not running whatever the config claims.
+ */
+export function billingSplit(
+  db: Db,
+  sinceDay?: string
+): { batchCalls: number; syncCalls: number; batchUsd: number; syncUsd: number; batchShare: number } {
+  const where = sinceDay ? `WHERE day >= ?` : '';
+  const rows = db
+    .prepare(
+      `SELECT model, batch,
+              COUNT(*) AS calls,
+              SUM(input_tokens) AS input_tokens,
+              SUM(output_tokens) AS output_tokens,
+              SUM(cached_tokens) AS cached_tokens
+         FROM llm_usage ${where}
+        GROUP BY model, batch`
+    )
+    .all(...(sinceDay ? [sinceDay] : [])) as {
+    model: string;
+    batch: number;
+    calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    cached_tokens: number;
+  }[];
+
+  let batchCalls = 0;
+  let syncCalls = 0;
+  let batchUsd = 0;
+  let syncUsd = 0;
+
+  for (const r of rows) {
+    const usd = estimateUsd(r.model, r.input_tokens, r.output_tokens, r.cached_tokens, r.batch === 1);
+    if (r.batch === 1) {
+      batchCalls += r.calls;
+      batchUsd += usd;
+    } else {
+      syncCalls += r.calls;
+      syncUsd += usd;
+    }
+  }
+
+  const total = batchCalls + syncCalls;
+  return {
+    batchCalls,
+    syncCalls,
+    batchUsd: round4(batchUsd),
+    syncUsd: round4(syncUsd),
+    batchShare: total > 0 ? Math.round((batchCalls / total) * 100) / 100 : 0,
+  };
+}
+
 export function dayKey(offsetDays = 0): string {
   const d = new Date(now().getTime() + offsetDays * 86_400_000);
   return iso(d).slice(0, 10);

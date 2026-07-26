@@ -47,7 +47,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 164 tests, no network
+npm test          # 167 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -173,6 +173,12 @@ the Message Batches API — a 50% discount in exchange for asynchronous results,
 is free money for a buffer since nobody is waiting on it. The pipeline persists in
 the database and survives restarts; sessions themselves never wait on a batch.
 
+**Serving a session and building depth are different jobs.** Covering the remaining
+plan is latency-critical, synchronous, and small — one item per slot, no more. Building
+depth toward `GYM_BUFFER_TARGET` is speculative, batched at half price, and belongs to
+the worker alone. Nothing on the answer path ever builds depth, so answering a question
+whose session is already covered generates nothing.
+
 **The buffer drains to a low-water mark before refilling.** A cell is not topped up
 the moment it drops below target — it drains to 40% of it, then refills to full in one
 call. Refilling by one after every served item would pay the cell's reasoning cost per
@@ -285,7 +291,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 164 tests, no network, ~1.9s
+npm test                 # 167 tests, no network, ~2s
 npm run test:grader      # the grader regression set against the live model
 ```
 

@@ -213,6 +213,7 @@ command, paste the output, I read it. Slower, and fine.
 | Deploy succeeds, health check fails | app is 503-ing; `/api/health/live` should still return 200 | check variables are actually on the service, not the project |
 | Data vanishes after a deploy | no volume, or `GYM_DB` points outside it | attach the volume, set `GYM_DB=/data/gym.db`; `storage.warning` in the health payload says which |
 | Build fails on `node-gyp rebuild` / "Could not find any Python installation" while installing `better-sqlite3` | Nixpacks picked Node 18, which is below `better-sqlite3`'s `>=22` floor, so no prebuilt binary matched and npm fell back to compiling — and the stock image has no Python. The Python error is the symptom; the Node version is the cause | already fixed in the repo: `"engines": { "node": "22.x" }` plus `.nvmrc`, and a `nixpacks.toml` adding `python3`, `gcc`, `gnumake` in case the gyp path is taken anyway. If you see it, confirm both files are on the deployed commit |
+| Generation fires right after answering a question | the session path is covering a slot the warm pass missed, or something is building depth on the answer path | expected only if the plan was not fully warmed. `ops.recent` shows `buffer.session_fill` with the cell count — if it fires every question with items already banked, that is a bug, not tuning |
 | A session says "N planned items could not be generated" | the message now names the reasons — `validator chose a different option than the key (x3)` means the node is drawn so that even a correct item looks wrong; `stem too similar` means the cell is narrow and the buffer already holds what it can; `rubric had 2 criteria` means a D6 node too thin to critique | the full trail is in `ops.recent` under `generate.mc_failed` / `generate.free_failed`. If one node produces most of them, edit that node — that is limitation 2 showing up exactly as designed |
 | Sessions start but every item is skipped with a generation error | bad or missing `ANTHROPIC_API_KEY`, or the model is unavailable | `config.anthropicKeyPresent` in the health payload; the real error text is in `ops.recentErrors` |
 | First item in a session takes 30s | buffer is empty and it is generating inline | expected on a genuinely cold start; planning a session now kicks a concurrent fill of its own cells, so this should be the first session on a new concept and not much else |
@@ -415,6 +416,24 @@ paying for it once per item was the largest avoidable cost in the system. A cell
 shortfall now goes into one call. At four items that is roughly **half the output tokens
 per item**, and it makes the items better: the prompt can require that they differ from
 each other, which is a stronger guarantee than generating four independently and hoping.
+
+**Serving a session and building depth are separate jobs, and conflating them cost
+real money.** Making a session servable is latency-critical, synchronous, and small —
+the plan needs one item per slot and not one more. Building depth toward
+`GYM_BUFFER_TARGET` is speculative, batched, and half price, and belongs entirely to
+the worker.
+
+They were tangled, with a specific bad consequence: the session warm filled each cell
+to exactly 1, then the post-answer refill measured those same cells against the full
+target. Since 1 is below 40% of any target above 2, **every planned cell read as
+depleted the moment the session began**, and answering the first question kicked off a
+synchronous refill of all of them. The hysteresis was working correctly; it was being
+handed a buffer the warm pass had guaranteed would look empty.
+
+Now the session path fills to plan need and never looks at the target, so answering a
+question with the plan already covered generates nothing at all. `/api/health` reports
+`spend.billing` — if `batchShare` is near zero after real use, the speculative pipeline
+is not going through the Batch API whatever the config says.
 
 **The buffer has hysteresis, and it has to.** A cell is not refilled the moment it
 drops below target — it drains to a low-water mark (40% of the target by default),

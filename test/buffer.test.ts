@@ -15,6 +15,8 @@ import { setTransport } from '../lib/llm/client';
 import {
   bufferConcurrency,
   bufferTarget,
+  fillSessionNeed,
+  planNeed,
   refillThreshold,
   topUpBuffer,
 } from '../lib/pipeline/buffer';
@@ -96,6 +98,89 @@ describe('the set-size dial', () => {
       String((gens[0].request.messages as { content: string }[])[0].content)
     )?.[1];
     expect(asked).toBe('6');
+  });
+});
+
+describe('serving a session never builds depth', () => {
+  it('warms exactly what the plan needs, counting cells that appear twice', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cells = listCells(db, conceptId).filter((c) => c.depth === 1);
+    const twice = cells.find((c) => c.node_id === nodeIds[0])!;
+    const once = cells.find((c) => c.node_id === nodeIds[1])!;
+
+    // A plan where one cell serves two slots.
+    await fillSessionNeed(db, conceptId, [twice.id, once.id, twice.id], { concurrency: 1 });
+
+    const count = (cellId: number) =>
+      (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM items WHERE cell_id = ? AND served_count = 0`)
+          .get(cellId) as { n: number }
+      ).n;
+
+    expect(count(twice.id)).toBe(2);
+    expect(count(once.id)).toBe(1);
+
+    // Two cells, so two generation calls — not one per item.
+    expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(2);
+  });
+
+  it('generates NOTHING when the remaining plan is already covered', async () => {
+    // This is the regression the user reported: answering question 1 kicked off a
+    // fresh generation. It happened because the warm pass filled each cell to 1
+    // while the refill pass measured against GYM_BUFFER_TARGET, so every warmed
+    // cell read as depleted the moment the session began.
+    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+    process.env.GYM_BUFFER_TARGET = '10';
+
+    const cells = listCells(db, conceptId).filter((c) => c.depth === 1);
+    const plan = [cells[0].id, cells[1].id, cells[2].id];
+
+    await fillSessionNeed(db, conceptId, plan, { concurrency: 1 });
+    const afterWarm = handle.calls.filter((c) => c.kind === 'item-mc').length;
+    expect(afterWarm).toBe(3);
+
+    // Serve the first slot, then do what the answer path does: cover what remains.
+    db.prepare(
+      `UPDATE items SET served_count = 1 WHERE id = (
+         SELECT id FROM items WHERE cell_id = ? LIMIT 1)`
+    ).run(cells[0].id);
+
+    await fillSessionNeed(db, conceptId, [cells[1].id, cells[2].id], { concurrency: 1 });
+
+    expect(handle.calls.filter((c) => c.kind === 'item-mc').length).toBe(afterWarm);
+  });
+
+  it('skips a cell whose items are already being written in a batch', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    // Pretend a batch is mid-flight for this cell.
+    db.prepare(
+      `INSERT INTO gen_batches (provider_batch_id, phase, payload, created_at)
+       VALUES ('b1', 'generate', ?, '2026-01-01T00:00:00.000Z')`
+    ).run(
+      JSON.stringify({
+        cells: [{ customId: `cell-${cell.id}`, cellId: cell.id, want: 5, model: 'm', depth: 1 }],
+      })
+    );
+
+    const report = await fillSessionNeed(db, conceptId, [cell.id], { concurrency: 1 });
+
+    // Paying twice for the same items is the failure mode here.
+    expect(report.generated).toBe(0);
+    expect(report.skipped).toBe(1);
+    expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(0);
   });
 });
 
