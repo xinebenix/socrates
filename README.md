@@ -47,7 +47,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 178 tests, no network
+npm test          # 179 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -195,6 +195,14 @@ amortize and must not:** every item gets its own blind solve from a call that ha
 no other item and no key. A test asserts one generation call and N validations for a set
 of N.
 
+**The first question of a cold session is the one unavoidable wait.** With nothing
+banked it has to be written before it can be shown. Everything after it should come
+from the buffer: the runner waits on a generation already in flight for the cell it
+needs rather than starting a second copy, and each item is persisted the moment its
+own validation passes rather than after the whole set is checked. `test/session-latency.test.ts`
+injects latency and fails if the learner waits more than once, or if a 20-slot plan
+buys more than 20 items.
+
 **Latency.** Generation plus validation is two sequential model calls and would feel
 slow inside a session. Three things keep it off the answer path: a background worker
 keeps at least three validated, unserved items ready per plausibly-due cell; planning a
@@ -291,7 +299,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 178 tests, no network, ~2s
+npm test                 # 179 tests, no network, ~8s
 npm run test:grader      # the grader regression set against the live model
 ```
 

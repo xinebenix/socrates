@@ -110,19 +110,42 @@ export function lookaheadCells(): number {
  * A module-level set is the right scope: the volume pins the deployment to one
  * replica with the worker in-process, so every writer is this process.
  */
-const generating = new Set<number>();
+const generating = new Map<number, { promise: Promise<void>; done: () => void }>();
 
 /** Reserved before any await, so a concurrent pass cannot pick the same cell. */
 function reserve(cellIds: number[]): void {
-  for (const id of cellIds) generating.add(id);
+  for (const id of cellIds) {
+    if (generating.has(id)) continue;
+    let done!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    generating.set(id, { promise, done });
+  }
 }
 
 function release(cellId: number): void {
+  const entry = generating.get(cellId);
+  if (!entry) return;
   generating.delete(cellId);
+  entry.done();
 }
 
 export function cellsGenerating(): ReadonlySet<number> {
-  return generating;
+  return new Set(generating.keys());
+}
+
+/**
+ * Resolves when the generation already running for this cell finishes, or null if
+ * none is.
+ *
+ * The session runner uses this instead of starting its own generation for a cell
+ * someone is already writing. Both paths took the same time — the difference was
+ * that one of them bought a second copy of the same items. This is the fix for the
+ * second question of a cold session waiting on a duplicate of work already in flight.
+ */
+export function generationInFlight(cellId: number): Promise<void> | null {
+  return generating.get(cellId)?.promise ?? null;
 }
 
 export interface TopUpReport {

@@ -171,21 +171,25 @@ export async function generateMcItems(
       viable.push(gen);
     }
 
-    // One blind validation per surviving item, in sequence.
+    // One blind validation per surviving item, in sequence — and each item is
+    // persisted the moment its own validation passes, not after the whole set has
+    // been checked.
     //
-    // Fanning these out would be faster, but the caller's concurrency limit counts
-    // model calls in flight and exists to stay under an account rate limit — a cell
-    // that quietly issued four parallel calls inside one "slot" would make that limit
-    // a fiction. Parallelism comes from the cell dimension instead, where the buffer
-    // controls it explicitly.
-    const verdicts: {
-      gen: McItemOut;
-      order: number[];
-      verdict: ValidatorVerdict;
-      keyedPosition: number;
-    }[] = [];
+    // That ordering matters for latency, not correctness: a cell being filled three
+    // deep used to make its first item available only after four call-durations, so
+    // the session runner looked at an empty buffer and generated a duplicate inline.
+    // Persisting incrementally puts item one in the buffer after two.
+    //
+    // Fanning the validations out would be faster still, but the caller's concurrency
+    // limit counts model calls in flight and exists to stay under an account rate
+    // limit — a cell quietly issuing four parallel calls inside one "slot" would make
+    // that limit a fiction. Parallelism comes from the cell dimension instead, where
+    // the buffer controls it explicitly.
+    const lastAttempt = attempt === MAX_GENERATION_ATTEMPTS;
 
     for (const gen of viable) {
+      if (accepted.length >= want) break;
+
       const order = shuffledIndices(gen.options.length);
       const shownTexts = order.map((i) => gen.options[i].text);
       const keyedIndex = gen.options.findIndex((o) => o.is_correct);
@@ -201,13 +205,7 @@ export async function generateMcItems(
           depth: ctx.cell.depth,
         })
       );
-      verdicts.push({ gen, order, verdict: validated.data, keyedPosition });
-    }
-
-    const lastAttempt = attempt === MAX_GENERATION_ATTEMPTS;
-
-    for (const { gen, order, verdict, keyedPosition } of verdicts) {
-      if (accepted.length >= want) break;
+      const verdict: ValidatorVerdict = validated.data;
       const result = gate(verdict, keyedPosition);
 
       if (result.regenerateOption && !lastAttempt) {

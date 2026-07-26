@@ -25,7 +25,7 @@ import {
 } from '../db/queries';
 import { generateItemForCell } from './generateItem';
 import { parseRubric } from './respond';
-import { topUpInBackground, warmSessionPlan } from './buffer';
+import { generationInFlight, topUpInBackground, warmSessionPlan } from './buffer';
 
 export interface StartSessionOptions {
   length?: number;
@@ -112,6 +112,15 @@ export type ServedItem = ServedMcItem | ServedFreeItem;
 /** How many items this request will generate inline before giving up for now. */
 const MAX_INLINE_GENERATIONS = 3;
 
+/**
+ * How long to wait for a generation already running for the cell we need.
+ *
+ * Long enough to cover a generate-plus-validate round on a slow model, short enough
+ * that a wedged call still falls through to generating our own rather than hanging
+ * the request.
+ */
+export const WAIT_FOR_INFLIGHT_MS = 75_000;
+
 export interface NextItemResult {
   item: ServedItem | null;
   /** Slots abandoned because their item could not be generated. */
@@ -152,6 +161,21 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
     // A benchmark plan pins its items at plan time; practice takes from the buffer.
     let item: ItemRow | undefined =
       slot.item_id != null ? getItem(db, slot.item_id) : takeBufferedItem(db, cell.id, kind);
+
+    // Someone may already be writing this exact cell — the session-start warm, or the
+    // refill from the previous answer. Waiting for that costs the same as generating
+    // and buys the items once instead of twice. Bounded, so a stuck generation cannot
+    // hold the request open.
+    if (!item) {
+      const inflight = generationInFlight(cell.id);
+      if (inflight) {
+        await Promise.race([
+          inflight,
+          new Promise<void>((r) => setTimeout(r, WAIT_FOR_INFLIGHT_MS)),
+        ]);
+        item = takeBufferedItem(db, cell.id, kind);
+      }
+    }
 
     if (!item) {
       if (inlineGenerations >= MAX_INLINE_GENERATIONS) {
