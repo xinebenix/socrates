@@ -29,6 +29,9 @@ npm run worker                    # in a second terminal — keeps the item buff
 | `GYM_MODEL` | `claude-opus-5` | |
 | `GYM_DB` | `./data/gym.db` | |
 | `GYM_BUFFER_TARGET` | `3` | validated, unserved items kept ready per plausibly-due cell |
+| `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12 |
+| `GYM_EFFORT_ITEM` | `medium` | reasoning effort for item generation — the hot path |
+| `GYM_EFFORT_BLUEPRINT` · `_VALIDATE` · `_GRADE` | `high` | lower these only deliberately; see [docs/DEPLOY.md](docs/DEPLOY.md) |
 
 To look at the interface without spending tokens:
 
@@ -38,7 +41,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 110 tests, no network
+npm test          # 116 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -160,10 +163,22 @@ fresh item, so a second visit is a second rep rather than the same question twic
 Without this a fresh blueprint could never produce a session longer than it has nodes.
 
 **Latency.** Generation plus validation is two sequential model calls and would feel
-slow inside a session. A background worker keeps at least three validated, unserved
-items ready per plausibly-due cell; the runner serves from that buffer and blocks on
-generation only when it is empty. If generation fails, the slot is dropped, the session
-continues, and the reason is shown rather than swallowed.
+slow inside a session. Three things keep it off the answer path: a background worker
+keeps at least three validated, unserved items ready per plausibly-due cell; planning a
+session immediately starts filling that session's own cells rather than waiting for the
+worker's next tick; and serving an item refills the cells still ahead of it. Items are
+generated concurrently — the two calls for one item are sequential by necessity, but two
+different items are not. The runner serves from the buffer and blocks on generation only
+when it is empty, which after the first session on a concept should be rare. If
+generation fails, the slot is dropped, the session continues, and the reason is shown
+rather than swallowed.
+
+Reasoning effort is set per call site and is the latency dial: item generation defaults
+to `medium`, while the blueprint, the validator and the grader stay at `high`. Those
+three are where a shortcut is expensive — and a weaker validator is *slower* as well as
+worse, because it rejects sound items and each rejection costs two more calls.
+`GYM_EFFORT_*` and `GYM_BUFFER_CONCURRENCY` override the defaults; `/api/health` reports
+median and worst-case generation times so the question can be settled with a number.
 
 ---
 
@@ -215,7 +230,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 110 tests, no network, ~1.5s
+npm test                 # 116 tests, no network, ~1.5s
 npm run test:grader      # the grader regression set against the live model
 ```
 

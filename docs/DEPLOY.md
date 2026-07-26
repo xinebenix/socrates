@@ -214,9 +214,53 @@ command, paste the output, I read it. Slower, and fine.
 | Data vanishes after a deploy | no volume, or `GYM_DB` points outside it | attach the volume, set `GYM_DB=/data/gym.db`; `storage.warning` in the health payload says which |
 | Build fails on `node-gyp rebuild` / "Could not find any Python installation" while installing `better-sqlite3` | Nixpacks picked Node 18, which is below `better-sqlite3`'s `>=22` floor, so no prebuilt binary matched and npm fell back to compiling — and the stock image has no Python. The Python error is the symptom; the Node version is the cause | already fixed in the repo: `"engines": { "node": "22.x" }` plus `.nvmrc`, and a `nixpacks.toml` adding `python3`, `gcc`, `gnumake` in case the gyp path is taken anyway. If you see it, confirm both files are on the deployed commit |
 | Sessions start but every item is skipped with a generation error | bad or missing `ANTHROPIC_API_KEY`, or the model is unavailable | `config.anthropicKeyPresent` in the health payload; the real error text is in `ops.recentErrors` |
-| First item in a session takes 30s | buffer is empty and it is generating inline | expected on a cold start; the worker fills it within a minute or two |
+| First item in a session takes 30s | buffer is empty and it is generating inline | expected on a genuinely cold start; planning a session now kicks a concurrent fill of its own cells, so this should be the first session on a new concept and not much else |
+| Generation feels slow generally | check `latency` in the health payload before changing anything — it reports median and worst-case ms for items and blueprints, and the effort level each call is running at | `GYM_EFFORT_ITEM=low` and a higher `GYM_BUFFER_CONCURRENCY` are the two dials; see the table below |
 | `SQLITE_BUSY` in the logs | more than one replica | set replicas back to 1 |
 | Slow but working, then a burst of errors | Anthropic rate limit | `ops.recentErrors` will show it; lower `GYM_BUFFER_TARGET` |
+
+## Latency, and the dials that change it
+
+Every call is Opus. An item is **two sequential calls** — write it, then blind-validate
+it — and a blueprint is one large one. That is the floor, and it is a deliberate floor:
+the validator is what keeps broken items out, and the blueprint is what everything
+downstream inherits from.
+
+So the strategy is to move the waiting off the answer path rather than to think less.
+Items are generated concurrently, planning a session immediately starts filling that
+session's own cells, and serving an item refills the cells still ahead of it. What is
+left is the first session on a brand-new concept, where there is genuinely nothing
+buffered yet.
+
+Read `latency` in the health payload before turning anything:
+
+```jsonc
+"latency": {
+  "effort": { "item": "medium", "blueprint": "high", "validate": "high", "grade": "high" },
+  "bufferConcurrency": 4,
+  "item":      { "n": 50, "medianMs": 41000, "maxMs": 138000 },
+  "blueprint": { "n": 2,  "medianMs": 96000, "maxMs": 121000 }
+}
+```
+
+A median item far above its floor usually means regeneration, not slow inference — a
+node whose items keep failing validation burns two calls per attempt. `ops.recent` will
+show `generate.timing` with an `attempts` above 1, and the fix is the blueprint node,
+not the dial.
+
+| Variable | Default | What it costs you |
+|---|---|---|
+| `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12. The cheapest speedup, until you hit your account's rate limit — then it produces 429s and gets slower |
+| `GYM_EFFORT_ITEM` | `medium` | `low` is noticeably faster and the items get blander. This is the hot path, so it is the dial with the most effect |
+| `GYM_EFFORT_BLUEPRINT` | `high` | `medium` roughly halves the one-time wait. It is also the one place a shortcut compounds — every item inherits the map's errors |
+| `GYM_EFFORT_VALIDATE` | `high` | **leave it.** A weaker validator rejects sound items, and each rejection costs two more calls — lowering this can make generation slower as well as worse |
+| `GYM_EFFORT_GRADE` | `high` | leave it. Invariant 9: charitable grading turns a failed retrieval into a passed one |
+| `GYM_BUFFER_TARGET` | `3` | items kept ready per cell. Higher means fewer cold waits and more tokens spent on items you may never see |
+| `GYM_WORKER_INTERVAL_MS` | `60000` | how often the background fill runs |
+
+If you want one change: raise `GYM_BUFFER_CONCURRENCY` to `8`. It costs no quality at
+all, and on a fresh concept it is the difference between the buffer filling during your
+first session and filling after it.
 
 ## Cost
 

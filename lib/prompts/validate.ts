@@ -1,5 +1,5 @@
 import type { JsonSchema } from '../llm/schema';
-import type { StructuredCall } from '../llm/client';
+import { effortFor, type StructuredCall } from '../llm/client';
 import type { ValidatorVerdict } from '../db/types';
 
 /**
@@ -97,7 +97,7 @@ export function buildValidationCall(input: ValidationInput): StructuredCall {
       `<item>\n<stem>${input.stem}</stem>\n<options>\n${options}\n</options>\n</item>`,
     schema: VALIDATION_SCHEMA,
     maxTokens: 4000,
-    effort: 'high',
+    effort: effortFor('validate'),
   };
 }
 

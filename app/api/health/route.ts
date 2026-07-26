@@ -5,8 +5,8 @@ import { dbPath, getDb } from '@/lib/db';
 import { authConfig, healthTokenMatches, SESSION_COOKIE, verifySession } from '@/lib/auth';
 import { opsCounts, recentOps } from '@/lib/ops';
 import { workerStatus } from '@/lib/pipeline/workerLoop';
-import { model } from '@/lib/llm/client';
-import { bufferTarget } from '@/lib/pipeline/buffer';
+import { effortFor, model } from '@/lib/llm/client';
+import { bufferConcurrency, bufferTarget } from '@/lib/pipeline/buffer';
 import { listConcepts } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
 
@@ -101,6 +101,19 @@ export async function GET(req: Request) {
       return { id: c.id, name: c.name, bufferedItems: buffered.n };
     });
 
+    // Generation latency, so "it feels slow" can be checked rather than debated.
+    report.latency = {
+      effort: {
+        item: effortFor('item'),
+        blueprint: effortFor('blueprint'),
+        validate: effortFor('validate'),
+        grade: effortFor('grade'),
+      },
+      bufferConcurrency: bufferConcurrency(),
+      item: timingSummary(db, 'generate.timing'),
+      blueprint: timingSummary(db, 'blueprint.generated'),
+    };
+
     report.ops = {
       counts: opsCounts(db),
       recentErrors: recentOps(db, 15, 'error'),
@@ -116,6 +129,41 @@ export async function GET(req: Request) {
 
   report.tookMs = Date.now() - started;
   return NextResponse.json(report, { status: report.ok ? 200 : 500 });
+}
+
+/**
+ * Median and worst case over the durations recorded in ops_log for one event.
+ *
+ * The median is the honest number for "how long does this take" — a mean is dragged
+ * around by the occasional three-attempt regeneration, which is a different problem
+ * with a different fix.
+ */
+function timingSummary(
+  db: ReturnType<typeof getDb>,
+  event: string
+): { n: number; medianMs: number | null; maxMs: number | null } {
+  const rows = db
+    .prepare(`SELECT detail FROM ops_log WHERE event = ? ORDER BY id DESC LIMIT 50`)
+    .all(event) as { detail: string | null }[];
+
+  const durations: number[] = [];
+  for (const row of rows) {
+    if (!row.detail) continue;
+    try {
+      const ms = (JSON.parse(row.detail) as { ms?: unknown }).ms;
+      if (typeof ms === 'number' && Number.isFinite(ms)) durations.push(ms);
+    } catch {
+      // A malformed log line is not worth failing a health check over.
+    }
+  }
+
+  if (durations.length === 0) return { n: 0, medianMs: null, maxMs: null };
+  durations.sort((a, b) => a - b);
+  return {
+    n: durations.length,
+    medianMs: durations[Math.floor(durations.length / 2)],
+    maxMs: durations[durations.length - 1],
+  };
 }
 
 /**

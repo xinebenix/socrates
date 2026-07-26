@@ -41,7 +41,22 @@ export interface GenerationOutcome {
 export async function generateItemForCell(db: Db, cellId: number): Promise<GenerationOutcome> {
   const cell = getCell(db, cellId);
   if (!cell) return fail('cell not found');
-  return cell.depth === 6 ? generateFreeItem(db, cellId) : generateMcItem(db, cellId);
+
+  const started = Date.now();
+  const outcome =
+    cell.depth === 6 ? await generateFreeItem(db, cellId) : await generateMcItem(db, cellId);
+
+  // Two model calls per attempt, so a slow cell is usually a cell that is being
+  // regenerated — the attempt count is the part worth seeing next to the duration.
+  logEvent(db, outcome.item ? 'info' : 'warn', 'generate.timing', {
+    cellId,
+    depth: cell.depth,
+    ms: Date.now() - started,
+    attempts: outcome.attempts,
+    ok: Boolean(outcome.item),
+  });
+
+  return outcome;
 }
 
 /* --------------------------------------------------------------- MC (D1-D5) */

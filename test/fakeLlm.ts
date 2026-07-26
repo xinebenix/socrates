@@ -29,9 +29,22 @@ export interface FakeHandle {
 }
 
 export function installFakeLlm(opts: FakeOptions = {}): FakeHandle {
+  const { handle, handler } = makeFakeLlm(opts);
+  setTransport(handler);
+  return handle;
+}
+
+/**
+ * The same fake, handed back rather than installed, so a test can wrap it — to add a
+ * delay, count what overlaps, or fail the first call.
+ */
+export function makeFakeLlm(opts: FakeOptions = {}): {
+  handle: FakeHandle;
+  handler: (request: Record<string, unknown>) => Promise<string>;
+} {
   const handle: FakeHandle = { calls: [], generations: 0, validations: 0 };
 
-  setTransport(async (request) => {
+  const handler = async (request: Record<string, unknown>): Promise<string> => {
     const kind = classify(request);
     handle.calls.push({ kind, request });
 
@@ -130,9 +143,9 @@ export function installFakeLlm(opts: FakeOptions = {}): FakeHandle {
       default:
         throw new Error(`fake llm: unrecognized request kind ${kind}`);
     }
-  });
+  };
 
-  return handle;
+  return { handle, handler };
 }
 
 /**

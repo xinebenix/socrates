@@ -1,5 +1,5 @@
 import type { JsonSchema } from '../llm/schema';
-import type { StructuredCall } from '../llm/client';
+import { effortFor, type StructuredCall } from '../llm/client';
 import { depth } from './depth';
 
 export interface McItemInput {
@@ -127,6 +127,6 @@ export function buildMcItemCall(input: McItemInput): StructuredCall {
       deadNote,
     schema: MC_ITEM_SCHEMA,
     maxTokens: 8000,
-    effort: 'high',
+    effort: effortFor('item'),
   };
 }

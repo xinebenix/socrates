@@ -26,6 +26,33 @@ export function model(): string {
   return process.env.GYM_MODEL ?? DEFAULT_MODEL;
 }
 
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * Reasoning effort per call site, overridable per call site.
+ *
+ * These are the latency dial, and they are not all worth the same. Item generation
+ * happens constantly and is what the wait in a session is made of. The blueprint runs
+ * once per concept but everything downstream inherits its errors. Validation is the
+ * gate on item quality, and a weaker validator is *worse* for latency as well as
+ * quality — it disagrees with sound items and triggers regeneration. Grading is
+ * invariant 9, where charity is the failure mode.
+ *
+ * So the defaults spend where a mistake is expensive and economise where it is not.
+ *
+ *   GYM_EFFORT_ITEM       default medium
+ *   GYM_EFFORT_BLUEPRINT  default high
+ *   GYM_EFFORT_VALIDATE   default high
+ *   GYM_EFFORT_GRADE      default high
+ */
+export function effortFor(kind: 'item' | 'blueprint' | 'validate' | 'grade'): Effort {
+  const env = process.env[`GYM_EFFORT_${kind.toUpperCase()}`]?.trim().toLowerCase();
+  if (env && (EFFORTS as string[]).includes(env)) return env as Effort;
+  return kind === 'item' ? 'medium' : 'high';
+}
+
 /**
  * The serialized request body, built without touching the network.
  *

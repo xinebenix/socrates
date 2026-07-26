@@ -25,7 +25,7 @@ import {
 } from '../db/queries';
 import { generateItemForCell } from './generateItem';
 import { parseRubric } from './respond';
-import { topUpInBackground } from './buffer';
+import { topUpInBackground, warmSessionPlan } from './buffer';
 
 export interface StartSessionOptions {
   length?: number;
@@ -70,6 +70,14 @@ export function startSession(
     db,
     session.id,
     slots.map((s) => ({ cellId: s.cellId, slotKind: s.slotKind }))
+  );
+
+  // The plan is known now, so start filling its cells immediately rather than letting
+  // the first few items be generated inline while the user waits on them.
+  warmSessionPlan(
+    db,
+    conceptId,
+    slots.map((s) => s.cellId)
   );
 
   return { sessionId: session.id, planned: slots.length, warning, frontier };
@@ -174,7 +182,15 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
     markItemServed(db, item.id);
 
     const node = getNode(db, cell.node_id);
-    if (node) topUpInBackground(db, node.concept_id);
+    // Refill while the user reads this one, preferring the cells still ahead in this
+    // session over whatever else in the concept happens to be plausibly due.
+    if (node) {
+      topUpInBackground(
+        db,
+        node.concept_id,
+        plan.filter((p) => p.position > slot.position).map((p) => p.cell_id)
+      );
+    }
 
     const shared = {
       itemId: item.id,

@@ -46,7 +46,12 @@ export function workerIntervalMs(): number {
   return Number.isFinite(raw) && raw >= 5_000 ? raw : 60_000;
 }
 
-export async function tick(maxGenerationsPerConcept = 4): Promise<void> {
+/**
+ * Per concept, per tick. Raised from 4 once generation stopped being serial: the
+ * old ceiling was four items an hour on a cold buffer, which a single session
+ * consumed in its first four slots.
+ */
+export async function tick(maxGenerationsPerConcept = 8): Promise<void> {
   const started = Date.now();
   const db = getDb();
 

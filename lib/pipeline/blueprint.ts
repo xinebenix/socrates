@@ -11,6 +11,7 @@ import type { Db } from '../db';
 import { structured } from '../llm/client';
 import { buildBlueprintCall, type BlueprintOut } from '../prompts/blueprint';
 import { looksContested } from '../source';
+import { logEvent } from '../ops';
 import {
   ensureCells,
   createNode,
@@ -45,8 +46,20 @@ export async function generateBlueprint(
     contested: looksContested(concept.name, concept.source_note),
   });
 
-  const { data } = await structured<BlueprintOut>(call);
-  return mergeBlueprint(db, conceptId, data);
+  const started = Date.now();
+  const { data, attempts } = await structured<BlueprintOut>(call);
+  const report = mergeBlueprint(db, conceptId, data);
+
+  // "It felt slow" is not something anyone can act on. This is.
+  logEvent(db, 'info', 'blueprint.generated', {
+    conceptId,
+    ms: Date.now() - started,
+    attempts,
+    nodes: data.nodes.length,
+    hasSource: Boolean(concept.source_text?.trim()),
+  });
+
+  return report;
 }
 
 /** Split out from the network call so the merge semantics can be tested directly. */
