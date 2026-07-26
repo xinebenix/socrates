@@ -2,8 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useDict } from '@/components/I18nProvider';
 
 export function LoginForm({ next }: { next: string }) {
+  const t = useDict();
   const router = useRouter();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +24,7 @@ export function LoginForm({ next }: { next: string }) {
         body: JSON.stringify({ password }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'could not sign in');
+      if (!res.ok) throw new Error(data.error ?? t.login.signInFailedFallback);
 
       // A full navigation, so middleware sees the new cookie on the next request.
       window.location.href = next.startsWith('/') ? next : '/concepts';
@@ -40,14 +42,14 @@ export function LoginForm({ next }: { next: string }) {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
+          placeholder={t.login.passwordPlaceholder}
           disabled={busy}
           autoFocus
           autoComplete="current-password"
-          aria-label="Password"
+          aria-label={t.login.passwordAriaLabel}
         />
         <button type="submit" disabled={busy || !password}>
-          {busy ? 'Checking…' : 'Enter'}
+          {busy ? t.login.submitButtonBusy : t.login.submitButton}
         </button>
       </div>
 

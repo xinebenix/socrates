@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { SpendSnapshot } from '@/lib/cost';
+import { useDict } from '@/components/I18nProvider';
+import { fill, type Dict } from '@/lib/i18n/dict';
 
 /**
  * Running cost, folded into the nav bar.
@@ -16,6 +18,7 @@ import type { SpendSnapshot } from '@/lib/cost';
  * distraction from the thing being trained.
  */
 export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
+  const t = useDict();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -64,16 +67,21 @@ export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
         // nothing about what it measures. title= would not fix that: it is only used
         // as an accessible name when an element has no text content at all.
         aria-label={
-          `Estimated spend this month: ${usd(snapshot.monthUsd)}` +
-          (budget.limitUsd !== null ? ` of a ${usd(budget.limitUsd)} budget` : '') +
-          (over ? ', budget reached' : '')
+          budget.limitUsd === null
+            ? fill(t.chrome.spendChipAriaLabel, { amount: usd(snapshot.monthUsd, t) })
+            : fill(
+                over
+                  ? t.chrome.spendChipAriaLabelWithBudgetReached
+                  : t.chrome.spendChipAriaLabelWithBudget,
+                { amount: usd(snapshot.monthUsd, t), limit: usd(budget.limitUsd, t) }
+              )
         }
-        title="Estimated spend this month"
+        title={t.chrome.spendChipTitle}
       >
         <span className="spend-chip-dot" aria-hidden />
-        <span className="tabular">{usd(snapshot.monthUsd)}</span>
+        <span className="tabular">{usd(snapshot.monthUsd, t)}</span>
         {budget.limitUsd !== null && (
-          <span className="spend-chip-limit tabular">/ {usd(budget.limitUsd)}</span>
+          <span className="spend-chip-limit tabular">/ {usd(budget.limitUsd, t)}</span>
         )}
       </button>
 
@@ -83,11 +91,11 @@ export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
           className="spend-panel fade"
           role="dialog"
           aria-modal="false"
-          aria-label="Estimated spend"
+          aria-label={t.chrome.spendPanelAriaLabel}
         >
           <div className="row wrap gap-14" style={{ marginBottom: 16 }}>
             <p className="section-label" style={{ margin: 0 }}>
-              Estimated spend · {snapshot.month}
+              {fill(t.chrome.spendPanelHeading, { month: snapshot.month })}
             </p>
             <button
               type="button"
@@ -96,22 +104,22 @@ export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
                 setOpen(false);
                 buttonRef.current?.focus();
               }}
-              aria-label="Close"
+              aria-label={t.chrome.closeButtonLabel}
             >
               ×
             </button>
           </div>
 
           <div className="row wrap gap-22" style={{ alignItems: 'baseline' }}>
-            <Figure label="Today" value={usd(snapshot.todayUsd)} />
-            <Figure label="This month" value={usd(snapshot.monthUsd)} />
+            <Figure label={t.chrome.figureToday} value={usd(snapshot.todayUsd, t)} />
+            <Figure label={t.chrome.figureThisMonth} value={usd(snapshot.monthUsd, t)} />
             {budget.limitUsd !== null && (
-              <Figure label="Budget" value={usd(budget.limitUsd)} warn={over} />
+              <Figure label={t.chrome.figureBudget} value={usd(budget.limitUsd, t)} warn={over} />
             )}
             <Figure
-              label="Ahead of use"
-              value={usd(snapshot.aheadOfUse.estimatedUsd)}
-              hint={`${snapshot.aheadOfUse.unservedItems} generated, not yet served`}
+              label={t.chrome.figureAheadOfUse}
+              value={usd(snapshot.aheadOfUse.estimatedUsd, t)}
+              hint={fill(t.chrome.aheadOfUseHint, { count: snapshot.aheadOfUse.unservedItems })}
             />
           </div>
 
@@ -128,9 +136,7 @@ export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
 
           {over && (
             <div className="warnbox" style={{ marginTop: 16 }}>
-              The monthly budget estimate has been reached, so pre-generation is paused.
-              Sessions still run — items are generated as you reach them, which is slower and
-              only spends on questions you actually see.
+              {t.chrome.budgetReachedWarning}
             </div>
           )}
 
@@ -139,10 +145,10 @@ export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
               <table className="mini" style={{ marginTop: 18, width: '100%' }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: 'left' }}>Call</th>
-                    <th style={{ textAlign: 'right' }}>Calls</th>
-                    <th style={{ textAlign: 'right' }}>Output tokens</th>
-                    <th style={{ textAlign: 'right' }}>Estimated</th>
+                    <th style={{ textAlign: 'left' }}>{t.chrome.tableHeaderCall}</th>
+                    <th style={{ textAlign: 'right' }}>{t.chrome.tableHeaderCalls}</th>
+                    <th style={{ textAlign: 'right' }}>{t.chrome.tableHeaderOutputTokens}</th>
+                    <th style={{ textAlign: 'right' }}>{t.chrome.tableHeaderEstimated}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -156,7 +162,7 @@ export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
                         {row.outputTokens.toLocaleString()}
                       </td>
                       <td className="tabular" style={{ textAlign: 'right' }}>
-                        {usd(row.estimatedUsd)}
+                        {usd(row.estimatedUsd, t)}
                       </td>
                     </tr>
                   ))}
@@ -168,14 +174,23 @@ export function SpendChip({ snapshot }: { snapshot: SpendSnapshot }) {
           {/* Whether the half-price pipeline is actually being used. A share near zero
               after real use means the speculative work is not being batched. */}
           <p className="note" style={{ marginTop: 16 }}>
-            {Math.round(snapshot.billing.batchShare * 100)}% of {snapshot.monthCalls.toLocaleString()}{' '}
-            calls went through the Batch API at half rate
-            {snapshot.billing.batchCalls === 0 ? ' — none yet, so nothing is discounted' : ''}.
+            {fill(
+              snapshot.billing.batchCalls === 0
+                ? t.chrome.batchShareNoteNone
+                : t.chrome.batchShareNote,
+              {
+                percent: Math.round(snapshot.billing.batchShare * 100),
+                calls: snapshot.monthCalls.toLocaleString(),
+              }
+            )}
           </p>
 
+          {/* The env var name is a literal, so the template is split around it rather
+              than interpolated — `fill` yields a string and this needs an element. */}
           <p className="note" style={{ marginTop: 8 }}>
-            Token counts are exact. Dollars are estimated from a built-in price table that
-            may be out of date — set <code>GYM_PRICES</code> to correct it.
+            {t.chrome.priceTableNote.split('{envVar}')[0]}
+            <code>GYM_PRICES</code>
+            {t.chrome.priceTableNote.split('{envVar}')[1]}
           </p>
         </div>
       )}
@@ -218,8 +233,8 @@ function Figure({
   );
 }
 
-function usd(n: number): string {
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return '<$0.01';
-  return `$${n.toFixed(2)}`;
+function usd(n: number, t: Dict): string {
+  if (n === 0) return `${t.chrome.currencySymbol}0.00`;
+  if (n < 0.01) return t.chrome.amountBelowCent;
+  return `${t.chrome.currencySymbol}${n.toFixed(2)}`;
 }

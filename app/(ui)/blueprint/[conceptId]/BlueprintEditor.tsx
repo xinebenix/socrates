@@ -198,7 +198,7 @@ export function BlueprintEditor({
         body: JSON.stringify({ ops }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'save failed');
+      if (!res.ok) throw new Error(data.error ?? t.blueprint.saveFailedError);
       if (data.nodes) setNodes(data.nodes);
       if (data.grid) setGrid(data.grid);
       router.refresh();
@@ -210,7 +210,7 @@ export function BlueprintEditor({
   }
 
   async function regenerate() {
-    setBusy('Regenerating and merging — surviving nodes keep their mastery and history…');
+    setBusy(t.blueprint.regeneratingBusy);
     setError(null);
     try {
       const res = await fetch('/api/blueprint', {
@@ -219,7 +219,7 @@ export function BlueprintEditor({
         body: JSON.stringify({ conceptId }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'regeneration failed');
+      if (!res.ok) throw new Error(data.error ?? t.blueprint.regenerationFailedError);
       router.refresh();
       window.location.reload();
     } catch (err) {
@@ -245,12 +245,16 @@ export function BlueprintEditor({
       <div className="panel">
         <div className="row wrap gap-14" style={{ marginBottom: 16 }}>
           <p className="section-label" style={{ margin: 0 }}>
-            Mastery grid
+            {t.blueprint.masteryGridLabel}
           </p>
           <div className="push row wrap gap-9">
-            <StartButton conceptId={conceptId} disabled={nodes.length === 0} label="Train" />
+            <StartButton
+              conceptId={conceptId}
+              disabled={nodes.length === 0}
+              label={t.blueprint.trainButton}
+            />
             <button type="button" className="btn small" disabled={!!busy} onClick={() => void regenerate()}>
-              Regenerate &amp; merge
+              {t.blueprint.regenerateAndMergeButton}
             </button>
           </div>
         </div>
@@ -295,7 +299,7 @@ export function BlueprintEditor({
       )}
 
       <div>
-        <p className="section-label">Nodes</p>
+        <p className="section-label">{t.blueprint.nodesLabel}</p>
         <div className="stack gap-14">
           {nodes.map((n, i) => (
             <NodeEditor
@@ -326,15 +330,20 @@ function CellInspector({
   onToggleApplicable: () => void;
   onClose: () => void;
 }) {
+  const t = useDict();
   const d = DEPTHS[cell.depth - 1];
   return (
     <div className="panel">
       <div className="row wrap gap-14" style={{ marginBottom: 12 }}>
         <span className="eyebrow-accent">
-          {row.title} · {d.short} {d.name}
+          {fill(t.blueprint.cellInspectorHeading, {
+            title: row.title,
+            depthShort: d.short,
+            depthName: d.name,
+          })}
         </span>
         <button type="button" className="btn small push" onClick={onClose}>
-          Close
+          {t.blueprint.closeButton}
         </button>
       </div>
       <p className="note" style={{ marginBottom: 14 }}>
@@ -344,18 +353,24 @@ function CellInspector({
         className="grid-tiles"
         style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))' }}
       >
-        <Stat label="Estimate" value={`${Math.round(cell.pMastery * 100)}%`} />
-        <Stat label="Effective" value={`${Math.round(cell.effectiveMastery * 100)}%`} />
-        <Stat label="Retrievability" value={`${Math.round(cell.retrievability * 100)}%`} />
-        <Stat label="Responses" value={String(cell.responseCount)} />
-        <Stat label="Interval" value={`${cell.intervalDays.toFixed(1)}d`} />
+        <Stat label={t.blueprint.statEstimate} value={`${Math.round(cell.pMastery * 100)}%`} />
+        <Stat label={t.blueprint.statEffective} value={`${Math.round(cell.effectiveMastery * 100)}%`} />
         <Stat
-          label="Next due"
+          label={t.blueprint.statRetrievability}
+          value={`${Math.round(cell.retrievability * 100)}%`}
+        />
+        <Stat label={t.blueprint.statResponses} value={String(cell.responseCount)} />
+        <Stat
+          label={t.blueprint.statInterval}
+          value={fill(t.blueprint.intervalDaysValue, { days: cell.intervalDays.toFixed(1) })}
+        />
+        <Stat
+          label={t.blueprint.statNextDue}
           value={cell.nextDueAt ? cell.nextDueAt.slice(0, 10) : '—'}
         />
       </div>
       <button type="button" className="btn small" style={{ marginTop: 14 }} onClick={onToggleApplicable}>
-        {cell.applicable ? 'Mark not applicable' : 'Mark applicable'}
+        {cell.applicable ? t.blueprint.markNotApplicableButton : t.blueprint.markApplicableButton}
       </button>
     </div>
   );
@@ -387,6 +402,7 @@ function NodeEditor({
   grid: GridRow | null;
   onPatch: (ops: unknown[]) => Promise<void>;
 }) {
+  const t = useDict();
   const [title, setTitle] = useState(node.title);
   const [description, setDescription] = useState(node.description);
   const [open, setOpen] = useState(false);
@@ -399,14 +415,16 @@ function NodeEditor({
           className="field"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          aria-label={`Title of node ${index + 1}`}
+          aria-label={fill(t.blueprint.nodeTitleAriaLabel, { index: index + 1 })}
           style={{ flex: 1, minWidth: 220, fontSize: 18 }}
         />
         <span className="eyebrow" style={{ paddingTop: 14 }}>
-          {node.origin}
+          {originLabel(t, node.origin)}
         </span>
         <button type="button" className="btn small" onClick={() => setOpen((v) => !v)}>
-          {open ? 'Collapse' : `Misconceptions (${node.misconceptions.length})`}
+          {open
+            ? t.blueprint.collapseButton
+            : fill(t.blueprint.misconceptionsToggle, { count: node.misconceptions.length })}
         </button>
       </div>
 
@@ -415,7 +433,7 @@ function NodeEditor({
         rows={3}
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        aria-label={`Description of ${node.title}`}
+        aria-label={fill(t.blueprint.nodeDescriptionAriaLabel, { title: node.title })}
         style={{ marginTop: 10 }}
       />
 
@@ -426,7 +444,7 @@ function NodeEditor({
           disabled={!dirty}
           onClick={() => void onPatch([{ op: 'update-node', nodeId: node.id, title, description }])}
         >
-          Save
+          {t.blueprint.saveNodeButton}
         </button>
         <button
           type="button"
@@ -434,7 +452,7 @@ function NodeEditor({
           disabled={index === 0}
           onClick={() => void onPatch([{ op: 'update-node', nodeId: node.id, orderIndex: index - 1 }])}
         >
-          Move up
+          {t.blueprint.moveUpButton}
         </button>
         <button
           type="button"
@@ -442,32 +460,30 @@ function NodeEditor({
           disabled={index === total - 1}
           onClick={() => void onPatch([{ op: 'update-node', nodeId: node.id, orderIndex: index + 1 }])}
         >
-          Move down
+          {t.blueprint.moveDownButton}
         </button>
         <button
           type="button"
           className="btn small danger push"
           onClick={() => {
-            if (
-              confirm(
-                `Delete "${node.title}"? Its cells, mastery estimates and response history go with it. This cannot be undone.`
-              )
-            ) {
+            if (confirm(fill(t.blueprint.deleteNodeConfirm, { title: node.title }))) {
               void onPatch([{ op: 'delete-node', nodeId: node.id }]);
             }
           }}
         >
-          Delete node
+          {t.blueprint.deleteNodeButton}
         </button>
       </div>
 
       {grid && (
         <p className="note" style={{ marginTop: 10 }}>
-          Applicable depths:{' '}
-          {grid.cells
-            .filter((c) => c.applicable)
-            .map((c) => `D${c.depth}`)
-            .join(' · ') || 'none'}
+          {fill(t.blueprint.applicableDepths, {
+            depths:
+              grid.cells
+                .filter((c) => c.applicable)
+                .map((c) => `D${c.depth}`)
+                .join(' · ') || t.blueprint.applicableDepthsNone,
+          })}
         </p>
       )}
 
@@ -483,14 +499,13 @@ function MisconceptionPanel({
   node: NodeWithMisconceptions;
   onPatch: (ops: unknown[]) => Promise<void>;
 }) {
+  const t = useDict();
   const [label, setLabel] = useState('');
   const [description, setDescription] = useState('');
 
   return (
     <div style={{ marginTop: 16, borderTop: '1px solid var(--rule-soft)', paddingTop: 16 }}>
-      <p className="section-label">
-        Misconceptions — the distractor bank. Vagueness here degrades every item.
-      </p>
+      <p className="section-label">{t.blueprint.misconceptionsPanelLabel}</p>
 
       <div className="stack gap-9">
         {node.misconceptions.map((m) => (
@@ -506,14 +521,17 @@ function MisconceptionPanel({
               <span className="note">{m.description}</span>
             </div>
             <span className="eyebrow tabular" style={{ paddingTop: 4 }}>
-              {m.origin} · chosen {m.times_selected}×
+              {fill(t.blueprint.misconceptionMeta, {
+                origin: m.origin,
+                count: m.times_selected,
+              })}
             </span>
             <button
               type="button"
               className="btn small danger"
               onClick={() => void onPatch([{ op: 'delete-misconception', id: m.id }])}
             >
-              Remove
+              {t.blueprint.removeMisconceptionButton}
             </button>
           </div>
         ))}
@@ -522,18 +540,18 @@ function MisconceptionPanel({
       <div className="stack gap-9" style={{ marginTop: 14 }}>
         <input
           className="field"
-          placeholder="Short handle, e.g. state ownership = social ownership"
+          placeholder={t.blueprint.misconceptionLabelPlaceholder}
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          aria-label="New misconception label"
+          aria-label={t.blueprint.newMisconceptionLabelAriaLabel}
         />
         <textarea
           className="field"
           rows={2}
-          placeholder="The belief in the first person, as a learner would hold it."
+          placeholder={t.blueprint.misconceptionDescriptionPlaceholder}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          aria-label="New misconception description"
+          aria-label={t.blueprint.newMisconceptionDescriptionAriaLabel}
         />
         <button
           type="button"
@@ -548,7 +566,7 @@ function MisconceptionPanel({
             setDescription('');
           }}
         >
-          Add misconception
+          {t.blueprint.addMisconceptionButton}
         </button>
       </div>
     </div>
@@ -562,27 +580,28 @@ function AddNode({
   conceptId: number;
   onPatch: (ops: unknown[]) => Promise<void>;
 }) {
+  const t = useDict();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
 
   return (
     <div className="panel">
-      <p className="section-label">Add a node by hand</p>
+      <p className="section-label">{t.blueprint.addNodeByHandLabel}</p>
       <div className="stack gap-9">
         <input
           className="field"
-          placeholder="Node title"
+          placeholder={t.blueprint.nodeTitlePlaceholder}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          aria-label="New node title"
+          aria-label={t.blueprint.newNodeTitleAriaLabel}
         />
         <textarea
           className="field"
           rows={3}
-          placeholder="What mastery of this node means — two to four sentences."
+          placeholder={t.blueprint.nodeDescriptionPlaceholder}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          aria-label="New node description"
+          aria-label={t.blueprint.newNodeDescriptionAriaLabel}
         />
         <button
           type="button"
@@ -597,7 +616,7 @@ function AddNode({
             setDescription('');
           }}
         >
-          Add node
+          {t.blueprint.addNodeButton}
         </button>
       </div>
     </div>

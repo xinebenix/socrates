@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CellStats } from '@/lib/analysis/itemStats';
+import { useDict } from '@/components/I18nProvider';
+import { fill } from '@/lib/i18n/dict';
 
 interface ItemDetail {
   id: number;
@@ -27,6 +29,7 @@ export function ItemHealthTable({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const t = useDict();
 
   async function open(cellId: number) {
     if (openCell === cellId) {
@@ -38,7 +41,7 @@ export function ItemHealthTable({
     try {
       const res = await fetch(`/api/items?cellId=${cellId}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'could not load items');
+      if (!res.ok) throw new Error(data.error ?? t.items.loadItemsError);
       setItems(data.items as ItemDetail[]);
       setOpenCell(cellId);
     } catch (err) {
@@ -58,7 +61,7 @@ export function ItemHealthTable({
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'action failed');
+      if (!res.ok) throw new Error(data.error ?? t.items.actionFailedError);
       setOpenCell(null);
       await open(cellId);
       router.refresh();
@@ -75,7 +78,7 @@ export function ItemHealthTable({
       {error && <div className="warnbox" style={{ marginBottom: 14 }}>{error}</div>}
 
       {withActivity.length === 0 ? (
-        <p className="note">No items generated yet for this concept.</p>
+        <p className="note">{t.items.noItemsForConcept}</p>
       ) : (
         <div className="ledger">
           {withActivity.map((c) => (
@@ -88,14 +91,18 @@ export function ItemHealthTable({
                   D{c.depth}
                 </span>
                 <span className="note tabular" style={{ flex: 1 }}>
-                  {c.itemCount} item{c.itemCount === 1 ? '' : 's'} · n = {c.n}
+                  {fill(c.itemCount === 1 ? t.items.cellItemCountOne : t.items.cellItemCountOther, {
+                    count: c.itemCount,
+                  })}{' '}
+                  · {fill(t.items.cellSampleSize, { n: c.n })}
                   {c.belowThreshold ? (
-                    <> · statistics withheld below n = 5</>
+                    <> · {fill(t.items.statisticsWithheld, { minN: 5 })}</>
                   ) : (
                     <>
                       {' '}
-                      · difficulty {fmt(c.difficulty)} · discrimination {fmt(c.discrimination)}{' '}
-                      <em style={{ color: 'var(--muted)' }}>(advisory)</em>
+                      · {fill(t.items.cellDifficulty, { value: fmt(c.difficulty) })} ·{' '}
+                      {fill(t.items.cellDiscrimination, { value: fmt(c.discrimination) })}{' '}
+                      <em style={{ color: 'var(--muted)' }}>{t.items.advisoryTag}</em>
                     </>
                   )}
                 </span>
@@ -105,7 +112,7 @@ export function ItemHealthTable({
                   disabled={busy}
                   onClick={() => void open(c.cellId)}
                 >
-                  {openCell === c.cellId ? 'Hide' : 'Items'}
+                  {openCell === c.cellId ? t.items.hideItemsButton : t.items.showItemsButton}
                 </button>
                 <button
                   type="button"
@@ -113,13 +120,13 @@ export function ItemHealthTable({
                   disabled={busy}
                   onClick={() => void act({ action: 'regenerate', cellId: c.cellId }, c.cellId)}
                 >
-                  Generate
+                  {t.items.generateButton}
                 </button>
               </div>
 
               {openCell === c.cellId && (
                 <div style={{ padding: '4px 18px 18px', background: 'var(--surface-sunken)' }}>
-                  {items.length === 0 && <p className="note">No items stored for this cell.</p>}
+                  {items.length === 0 && <p className="note">{t.items.noItemsForCell}</p>}
                   {items.map((it) => (
                     <div
                       key={it.id}
@@ -127,11 +134,19 @@ export function ItemHealthTable({
                       style={{ marginTop: 12, background: 'var(--surface)' }}
                     >
                       <div className="row wrap gap-9" style={{ marginBottom: 8 }}>
-                        <span className="eyebrow tabular">#{it.id}</span>
-                        {it.frozen === 1 && <span className="eyebrow-accent">benchmark</span>}
-                        {it.retired === 1 && <span className="eyebrow">retired</span>}
-                        {it.validated === 0 && <span className="eyebrow">rejected by validator</span>}
-                        <span className="eyebrow tabular push">served {it.served_count}×</span>
+                        <span className="eyebrow tabular">
+                          {fill(t.items.itemIdLabel, { id: it.id })}
+                        </span>
+                        {it.frozen === 1 && (
+                          <span className="eyebrow-accent">{t.items.benchmarkBadge}</span>
+                        )}
+                        {it.retired === 1 && <span className="eyebrow">{t.items.retiredBadge}</span>}
+                        {it.validated === 0 && (
+                          <span className="eyebrow">{t.items.rejectedByValidatorBadge}</span>
+                        )}
+                        <span className="eyebrow tabular push">
+                          {fill(t.items.itemServedCount, { count: it.served_count })}
+                        </span>
                       </div>
 
                       <p className="serif-body" style={{ margin: '0 0 10px' }}>
@@ -145,7 +160,7 @@ export function ItemHealthTable({
                               {o.is_correct === 1 ? '✓ ' : '· '}
                               {o.text}{' '}
                               <span style={{ color: 'var(--muted)' }}>
-                                (chosen {o.selected_count}×)
+                                {fill(t.items.optionChosenCount, { count: o.selected_count })}
                               </span>
                             </li>
                           ))}
@@ -154,8 +169,14 @@ export function ItemHealthTable({
 
                       {it.validator?.flags && it.validator.flags.length > 0 && (
                         <p className="note" style={{ color: 'var(--terra)' }}>
-                          validator flags: {it.validator.flags.join(', ')}
-                          {it.validator.notes ? ` — ${it.validator.notes}` : ''}
+                          {fill(t.items.validatorFlags, {
+                            flags: it.validator.flags.join(', '),
+                          })}
+                          {it.validator.notes
+                            ? fill(t.items.validatorFlagsNotesSuffix, {
+                                notes: it.validator.notes,
+                              })
+                            : ''}
                         </p>
                       )}
 
@@ -167,12 +188,12 @@ export function ItemHealthTable({
                             disabled={busy || it.validated !== 1}
                             title={
                               it.validated === 1
-                                ? 'Freeze this item into the benchmark set. It leaves practice permanently.'
-                                : 'Only validated items can join the benchmark set.'
+                                ? t.items.promoteButtonTitleEnabled
+                                : t.items.promoteButtonTitleDisabled
                             }
                             onClick={() => void act({ action: 'promote', itemId: it.id }, c.cellId)}
                           >
-                            Promote to benchmark
+                            {t.items.promoteButton}
                           </button>
                         ) : (
                           <button
@@ -181,7 +202,7 @@ export function ItemHealthTable({
                             disabled={busy}
                             onClick={() => void act({ action: 'demote', itemId: it.id }, c.cellId)}
                           >
-                            Return to practice
+                            {t.items.demoteButton}
                           </button>
                         )}
                         <button
@@ -195,7 +216,7 @@ export function ItemHealthTable({
                             )
                           }
                         >
-                          {it.retired === 1 ? 'Un-retire' : 'Retire'}
+                          {it.retired === 1 ? t.items.unretireButton : t.items.retireButton}
                         </button>
                       </div>
                     </div>
@@ -207,7 +228,7 @@ export function ItemHealthTable({
         </div>
       )}
       <p className="note" style={{ marginTop: 12 }}>
-        Concept #{conceptId}
+        {fill(t.items.conceptIdLabel, { conceptId })}
       </p>
     </>
   );

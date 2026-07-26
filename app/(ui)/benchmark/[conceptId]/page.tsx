@@ -4,6 +4,8 @@ import { getDb } from '@/lib/db';
 import { getConcept, listBenchmarkRuns, listFrozenItems } from '@/lib/db/queries';
 import { benchmarkCoverage } from '@/lib/pipeline/benchmark';
 import { Topbar } from '@/components/Chrome';
+import { getDict } from '@/lib/i18n/server';
+import { fill } from '@/lib/i18n/dict';
 import { RunBenchmarkButton } from './RunBenchmarkButton';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +22,7 @@ export default async function BenchmarkPage({
 }: {
   params: Promise<{ conceptId: string }>;
 }) {
+  const t = await getDict();
   const { conceptId: raw } = await params;
   const conceptId = Number(raw);
   if (!Number.isFinite(conceptId)) notFound();
@@ -45,41 +48,38 @@ export default async function BenchmarkPage({
         <div className="column wide rise stack gap-22">
           <div>
             <p className="eyebrow" style={{ marginBottom: 14 }}>
-              The frozen set — the only honest measurement
+              {t.benchmark.eyebrow}
             </p>
             <h1 className="display">{concept.name}</h1>
-            <p className="lede">
-              Practice runs on items generated fresh every time, which is what stops you memorizing
-              the card instead of knowing the concept — but it also means improvement and item
-              drift are indistinguishable. These items are frozen, human-vetted, and never enter
-              practice. A benchmark run shows no feedback until the whole run is finished.
-            </p>
+            <p className="lede">{t.benchmark.lede}</p>
             <div className="row wrap gap-9">
               <RunBenchmarkButton conceptId={conceptId} disabled={frozen.length === 0} />
               <Link className="btn small" href={`/items/${conceptId}`}>
-                Promote items to the set
+                {t.benchmark.promoteItemsLink}
               </Link>
             </div>
           </div>
 
           {frozen.length === 0 && (
-            <div className="warnbox">
-              The frozen set is empty. Until it has items, nothing here can tell you whether you are
-              improving or the generator merely got easier. Promote validated items from the item
-              health screen.
-            </div>
+            <div className="warnbox">{t.benchmark.emptySetWarning}</div>
           )}
 
           {uncovered.length > 0 && frozen.length > 0 && (
             <div className="warnbox">
-              {uncovered.length} node{uncovered.length === 1 ? ' has' : 's have'} no frozen item:{' '}
-              {uncovered.map((u) => u.title).join(', ')}. The benchmark measures only what it
-              covers.
+              {fill(
+                uncovered.length === 1
+                  ? t.benchmark.uncoveredWarningOne
+                  : t.benchmark.uncoveredWarningOther,
+                {
+                  count: uncovered.length,
+                  nodes: uncovered.map((u) => u.title).join(', '),
+                }
+              )}
             </div>
           )}
 
           <div className="panel">
-            <p className="section-label">Per-node coverage of the frozen set</p>
+            <p className="section-label">{t.benchmark.coverageSectionLabel}</p>
             <div className="ledger">
               {coverage.map((c) => (
                 <div className="ledger-row" key={c.nodeId}>
@@ -88,7 +88,12 @@ export default async function BenchmarkPage({
                     {c.title}
                   </span>
                   <span className="eyebrow tabular" style={{ flex: 'none' }}>
-                    {c.itemCount} item{c.itemCount === 1 ? '' : 's'}
+                    {fill(
+                      c.itemCount === 1
+                        ? t.benchmark.coverageItemCountOne
+                        : t.benchmark.coverageItemCountOther,
+                      { count: c.itemCount }
+                    )}
                     {c.depths.length > 0 && ` · ${c.depths.map((d) => `D${d}`).join(' ')}`}
                   </span>
                 </div>
@@ -97,9 +102,9 @@ export default async function BenchmarkPage({
           </div>
 
           <div className="panel">
-            <p className="section-label">Run history</p>
+            <p className="section-label">{t.benchmark.runHistorySectionLabel}</p>
             {runs.length === 0 ? (
-              <p className="note">No runs yet.</p>
+              <p className="note">{t.benchmark.noRunsYet}</p>
             ) : (
               <>
                 <div className="spark" style={{ marginBottom: 18 }}>
@@ -108,7 +113,10 @@ export default async function BenchmarkPage({
                       key={r.id}
                       className="bar accent"
                       style={{ height: `${Math.max(2, (r.results.overall ?? 0) * 100)}%` }}
-                      title={`${r.runAt.slice(0, 10)}: ${Math.round((r.results.overall ?? 0) * 100)}%`}
+                      title={fill(t.benchmark.runBarTitle, {
+                        date: r.runAt.slice(0, 10),
+                        percent: Math.round((r.results.overall ?? 0) * 100),
+                      })}
                     />
                   ))}
                 </div>
@@ -145,9 +153,11 @@ export default async function BenchmarkPage({
           </div>
 
           <div className="panel">
-            <p className="section-label">Frozen items ({frozen.length})</p>
+            <p className="section-label">
+              {fill(t.benchmark.frozenItemsSectionLabel, { count: frozen.length })}
+            </p>
             {frozen.length === 0 ? (
-              <p className="note">Empty.</p>
+              <p className="note">{t.benchmark.frozenItemsEmpty}</p>
             ) : (
               <div className="ledger">
                 {frozen.map((i) => (

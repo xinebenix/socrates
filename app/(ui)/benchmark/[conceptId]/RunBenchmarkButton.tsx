@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useDict } from '@/components/I18nProvider';
 
 export function RunBenchmarkButton({
   conceptId,
@@ -10,6 +11,7 @@ export function RunBenchmarkButton({
   conceptId: number;
   disabled?: boolean;
 }) {
+  const t = useDict();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export function RunBenchmarkButton({
         body: JSON.stringify({ conceptId }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'could not start the run');
+      if (!res.ok) throw new Error(data.error ?? t.benchmark.runStartError);
       router.push(`/session/${data.sessionId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -40,7 +42,7 @@ export function RunBenchmarkButton({
         disabled={busy || disabled}
         onClick={() => void run()}
       >
-        {busy ? 'Starting…' : 'Run benchmark'}
+        {busy ? t.benchmark.runButtonBusy : t.benchmark.runButton}
       </button>
       {error && (
         <span className="note" style={{ color: 'var(--terra)' }}>

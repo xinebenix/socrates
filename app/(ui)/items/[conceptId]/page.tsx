@@ -8,6 +8,8 @@ import {
   nodeHealth,
 } from '@/lib/analysis/itemStats';
 import { Topbar } from '@/components/Chrome';
+import { getDict } from '@/lib/i18n/server';
+import { fill } from '@/lib/i18n/dict';
 import { ItemHealthTable } from './ItemHealthClient';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +19,7 @@ export default async function ItemsPage({
 }: {
   params: Promise<{ conceptId: string }>;
 }) {
+  const t = await getDict();
   const { conceptId: raw } = await params;
   const conceptId = Number(raw);
   if (!Number.isFinite(conceptId)) notFound();
@@ -36,31 +39,30 @@ export default async function ItemsPage({
         <div className="column wide rise stack gap-22">
           <div>
             <p className="eyebrow" style={{ marginBottom: 14 }}>
-              Item health — the harness evaluating itself
+              {t.items.eyebrow}
             </p>
             <h1 className="display">{concept.name}</h1>
-            <p className="advisory">
-              Single-user statistics are thin. Classical item analysis assumes many test-takers;
-              with one person and a handful of administrations per item, difficulty and
-              discrimination estimates are noisy. These are aggregated at the cell level, hidden
-              below n&nbsp;=&nbsp;{MIN_N_FOR_STATISTIC}, and <strong>advisory only</strong> — do not
-              read them as measurements.
-            </p>
+            <p
+              className="advisory"
+              // The entry carries its own `&nbsp;` and `<strong>` markup, which is why it
+              // goes in as HTML rather than as a text child. The source is the static
+              // dictionary, never a database row.
+              dangerouslySetInnerHTML={{
+                __html: fill(t.items.statsAdvisory, { minN: MIN_N_FOR_STATISTIC }),
+              }}
+            />
           </div>
 
           <div className="panel">
-            <p className="section-label">Per cell</p>
+            <p className="section-label">{t.items.perCellLabel}</p>
             <ItemHealthTable conceptId={conceptId} cells={cells} />
           </div>
 
           <div className="panel">
-            <p className="section-label">
-              Dead distractors — never chosen across five or more administrations
-            </p>
+            <p className="section-label">{t.items.deadDistractorsLabel}</p>
             {dead.length === 0 ? (
               <p className="note">
-                None yet. A distractor nobody picks silently converts a 4-option item into a
-                3-option item and inflates the guess rate, so this list is worth clearing.
+                {t.items.deadDistractorsNoneYet} {t.items.deadDistractorsRationale}
               </p>
             ) : (
               <div className="ledger">
@@ -74,7 +76,7 @@ export default async function ItemsPage({
                       {d.text}
                     </span>
                     <span className="eyebrow tabular" style={{ flex: 'none' }}>
-                      {d.administrations} served
+                      {fill(t.items.distractorServedCount, { count: d.administrations })}
                     </span>
                   </div>
                 ))}
@@ -83,11 +85,9 @@ export default async function ItemsPage({
           </div>
 
           <div className="panel">
-            <p className="section-label">Validator rejection rate by node</p>
+            <p className="section-label">{t.items.validatorRejectionLabel}</p>
             <p className="advisory" style={{ marginBottom: 14 }}>
-              A node above 30% is usually badly drawn rather than hard. The likeliest explanation
-              for scattered failure is not several separate gaps but one node that was never
-              properly cut.
+              {t.items.validatorRejectionAdvisory}
             </p>
             <div className="ledger">
               {health.map((h) => (
@@ -97,8 +97,11 @@ export default async function ItemsPage({
                     {h.nodeTitle}
                   </span>
                   <span className="eyebrow tabular" style={{ flex: 'none' }}>
-                    {h.rejected}/{h.generated} rejected ·{' '}
-                    {h.generated > 0 ? `${Math.round(h.rejectionRate * 100)}%` : '—'}
+                    {fill(t.items.nodeRejectionSummary, {
+                      rejected: h.rejected,
+                      generated: h.generated,
+                      rate: h.generated > 0 ? `${Math.round(h.rejectionRate * 100)}%` : '—',
+                    })}
                   </span>
                 </div>
               ))}
