@@ -346,6 +346,60 @@ generated one at a time as you reach them — slower, and you only pay for quest
 actually see. It resets on the first of the month, and because it runs off the estimate
 it is a guardrail rather than a guarantee.
 
+### Model strategies
+
+`GYM_STRATEGY` picks a whole model assignment in one variable. Run
+`npx tsx scripts/cost-model.ts` to price them against the current table — and once you
+have a day of real usage, `--measured` re-runs it against your own token counts instead
+of the built-in assumptions.
+
+Estimated monthly cost at 20 sessions x 20 items, two concepts, 75% of served items at
+D1-D3, x1.4 generated per served:
+
+| `GYM_STRATEGY` | items D1-3 / D4-6 | gate D1-3 / D4-6 | blueprint | grade | $/mo | vs ref |
+|---|---|---|---|---|---|---|
+| `reference` | opus / opus | opus / opus | opus | opus | $285 | — |
+| `shipped` *(default)* | sonnet / opus | opus / opus | opus | opus | $197 | −31% |
+| `split-gate` | sonnet / opus | **sonnet** / opus | opus | opus | $128 | −55% |
+| `sonnet-gate` | sonnet / opus | sonnet / **sonnet** | opus | opus | $105 | −63% |
+| `economy` | **haiku** / sonnet | sonnet / sonnet | opus | opus | $48 | −83% |
+| `floor` | haiku / sonnet | sonnet / sonnet | opus | **sonnet** | $45 | −84% |
+
+Individual `GYM_MODEL_*` variables still override whatever the strategy says, and
+`GYM_MODEL` redefines what a strategy means by "the strong model" — so
+`GYM_STRATEGY=split-gate GYM_MODEL=claude-opus-4-1` is a valid combination.
+
+**Every strategy keeps the blueprint on the strong model**, and there is a test that
+says so. It runs once per concept, it is a rounding error against a month of items, and
+it is the one error that compounds into every item ever generated from it.
+
+Where I would stop: `split-gate`. It halves the bill by moving only the shallow half of
+the gate, and the deep items — where a missed flaw is expensive — keep the strong
+validator. Past that, `economy` is a real change in item character, and `floor` gives up
+the uncharitable grader, which is invariant 9.
+
+### About older Opus models
+
+Worth saying plainly, because it is the natural thing to try: **an older Opus is not a
+cheaper Opus.** Opus has historically carried the same list price across generations, so
+substituting 4.1 for 5 in the price table changes the total by nothing:
+
+| | $/mo | vs ref |
+|---|---|---|
+| `shipped` | $197 | −31% |
+| `shipped` + Opus 4.1 on both gates | $197 | −31% |
+| Opus 4.1 + Sonnet 4.5 throughout | $155 | −46% |
+
+That third row only saves anything because it also moves deep item writing from Opus to
+Sonnet 4.5 — the saving is the Sonnet, not the older Opus. If the goal is spend, a
+current Sonnet is roughly 5x cheaper than any Opus and is the lever that actually moves.
+
+Pinning an older Opus is still reasonable for other reasons — you may prefer its
+behaviour on a particular task, or want to stop a model change from moving your item
+quality under you. Just do not expect a discount, and verify both prices against your
+billing page before planning around it. The script prints a warning when two models in a
+comparison share a price.
+
 ### Making it cheaper
 
 In rough order of savings per unit of regret:

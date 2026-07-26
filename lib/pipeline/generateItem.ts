@@ -115,6 +115,8 @@ export async function generateMcItem(db: Db, cellId: number): Promise<Generation
         optionTexts: shownTexts,
         nodeDescription: ctx.node.description,
         sourceExcerpt: ctx.excerpt,
+        // Model selection only — never reaches the prompt. See ValidationInput.
+        depth: ctx.cell.depth,
       })
     );
     const verdict: ValidatorVerdict = validated.data;

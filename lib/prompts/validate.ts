@@ -20,6 +20,14 @@ export interface ValidationInput {
   optionTexts: string[];
   nodeDescription: string;
   sourceExcerpt: string;
+  /**
+   * Used to pick the validating model and for nothing else — it is deliberately not
+   * put in the prompt. Telling the validator "this is a discrimination item" primes
+   * it to expect close options, and the whole value of a blind check is that it comes
+   * to the item with no expectations. Invariant 3 is about the answer key, but the
+   * same logic covers anything that hints at the intended shape.
+   */
+  depth?: number;
 }
 
 export const VALIDATOR_FLAGS = [
@@ -98,7 +106,7 @@ export function buildValidationCall(input: ValidationInput): StructuredCall {
     schema: VALIDATION_SCHEMA,
     maxTokens: 4000,
     effort: effortFor('validate'),
-    model: modelFor('validate'),
+    model: modelFor('validate', input.depth),
   };
 }
 

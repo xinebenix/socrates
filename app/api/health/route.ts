@@ -5,7 +5,7 @@ import { dbPath, getDb } from '@/lib/db';
 import { authConfig, healthTokenMatches, SESSION_COOKIE, verifySession } from '@/lib/auth';
 import { opsCounts, recentOps } from '@/lib/ops';
 import { workerStatus } from '@/lib/pipeline/workerLoop';
-import { STRONG_FROM_DEPTH, effortFor, model, modelFor } from '@/lib/llm/client';
+import { STRONG_FROM_DEPTH, effortFor, model, modelFor, strategyName } from '@/lib/llm/client';
 import { bufferConcurrency, bufferTarget } from '@/lib/pipeline/buffer';
 import { listConcepts } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
@@ -110,11 +110,13 @@ export async function GET(req: Request) {
 
     // Generation latency, so "it feels slow" can be checked rather than debated.
     report.latency = {
+      strategy: strategyName(),
       models: {
         itemShallow: modelFor('item', 1),
         itemDeep: modelFor('item', STRONG_FROM_DEPTH),
         blueprint: modelFor('blueprint'),
-        validate: modelFor('validate'),
+        validateShallow: modelFor('validate', 1),
+        validateDeep: modelFor('validate', STRONG_FROM_DEPTH),
         grade: modelFor('grade'),
       },
       effort: {

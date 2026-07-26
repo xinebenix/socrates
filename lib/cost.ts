@@ -33,6 +33,15 @@ export const DEFAULT_PRICES: Record<string, Price> = {
   'claude-sonnet-5': { input: 3, output: 15, cachedInput: 0.3 },
   'claude-fable-5': { input: 3, output: 15, cachedInput: 0.3 },
   'claude-haiku-4-5-20251001': { input: 1, output: 5, cachedInput: 0.1 },
+
+  // Previous generation. Listed so that pinning an older model still produces a
+  // costed line rather than a $0.00 one. Note that Opus has historically held the
+  // same list price across generations — an older Opus buys latency and availability,
+  // not a discount. Verify before planning around it.
+  'claude-opus-4-1': { input: 15, output: 75, cachedInput: 1.5 },
+  'claude-opus-4-20250514': { input: 15, output: 75, cachedInput: 1.5 },
+  'claude-sonnet-4-5': { input: 3, output: 15, cachedInput: 0.3 },
+  'claude-3-5-haiku-20241022': { input: 0.8, output: 4, cachedInput: 0.08 },
 };
 
 /** Used when a model is not in the table, so an unknown model reads as unpriced. */

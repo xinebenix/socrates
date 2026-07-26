@@ -28,11 +28,131 @@ export function model(): string {
   return process.env.GYM_MODEL ?? DEFAULT_MODEL;
 }
 
-/** Item writing at the shallow depths, where the blueprint has done the hard part. */
-export const DEFAULT_ITEM_MODEL = 'claude-sonnet-5';
+/**
+ * Resolves to whatever GYM_MODEL says, so a strategy can express "the strong one
+ * here" without hardcoding which model that is.
+ */
+export const STRONG = '@strong';
+
+export interface ModelStrategy {
+  blueprint: string;
+  itemShallow: string;
+  itemDeep: string;
+  validateShallow: string;
+  validateDeep: string;
+  grade: string;
+  summary: string;
+}
 
 /**
- * The depth at and above which item writing escalates to the strong model.
+ * Named model assignments.
+ *
+ * The six slots exist because these are six different jobs. The blueprint is the
+ * hardest reasoning in the system and everything downstream inherits its errors. The
+ * validator is the quality gate. The grader is invariant 9. Writing a D1 recall item
+ * against a finished blueprint is not in that class.
+ *
+ * A less obvious reason the slots are split: generator and validator on the same
+ * model share blind spots. An item whose flaw is invisible to Opus is invisible to an
+ * Opus validator too, so the pairing matters as much as the individual choices.
+ *
+ * Pick one with GYM_STRATEGY. Individual GYM_MODEL_* variables still win over it, so
+ * a strategy is a starting point rather than a cage. See scripts/cost-model.ts for
+ * what each costs.
+ */
+export const STRATEGIES: Record<string, ModelStrategy> = {
+  /** Everything on the strong model. The original build, and the quality reference. */
+  reference: {
+    blueprint: STRONG,
+    itemShallow: STRONG,
+    itemDeep: STRONG,
+    validateShallow: STRONG,
+    validateDeep: STRONG,
+    grade: STRONG,
+    summary: 'Everything Opus. The quality bar, and the price of it.',
+  },
+
+  /** The default. Shallow item writing is the only thing moved off the strong model. */
+  shipped: {
+    blueprint: STRONG,
+    itemShallow: 'claude-sonnet-5',
+    itemDeep: STRONG,
+    validateShallow: STRONG,
+    validateDeep: STRONG,
+    grade: STRONG,
+    summary: 'D1-D3 items on Sonnet. Every gate still Opus.',
+  },
+
+  /**
+   * Cheapest change I would make without hesitating. The validator runs on every
+   * item and is the largest single line; Sonnet solving a D1-D3 multiple-choice item
+   * is well within its range, and the deep items — where a missed flaw is expensive —
+   * keep the strong gate.
+   */
+  'split-gate': {
+    blueprint: STRONG,
+    itemShallow: 'claude-sonnet-5',
+    itemDeep: STRONG,
+    validateShallow: 'claude-sonnet-5',
+    validateDeep: STRONG,
+    grade: STRONG,
+    summary: 'Sonnet validates shallow items, Opus validates deep ones.',
+  },
+
+  /**
+   * Sonnet gates everything. Note that at D1-D3 the generator and validator are then
+   * the same model — the agreement check gets weaker exactly where it is cheapest to
+   * be wrong, which is the trade being made.
+   */
+  'sonnet-gate': {
+    blueprint: STRONG,
+    itemShallow: 'claude-sonnet-5',
+    itemDeep: STRONG,
+    validateShallow: 'claude-sonnet-5',
+    validateDeep: 'claude-sonnet-5',
+    grade: STRONG,
+    summary: 'Sonnet validates everything. Correlated blind spots at D1-D3.',
+  },
+
+  /** Haiku writes the shallow end. Watch the rejection rate on the item-health screen. */
+  economy: {
+    blueprint: STRONG,
+    itemShallow: 'claude-haiku-4-5-20251001',
+    itemDeep: 'claude-sonnet-5',
+    validateShallow: 'claude-sonnet-5',
+    validateDeep: 'claude-sonnet-5',
+    grade: STRONG,
+    summary: 'Haiku writes D1-D3, Sonnet writes D4-D6 and gates. Opus keeps blueprint and grading.',
+  },
+
+  /**
+   * The floor. Opus draws the blueprint once and touches nothing else — including
+   * the grader, which is invariant 9 and the one I would put back first.
+   */
+  floor: {
+    blueprint: STRONG,
+    itemShallow: 'claude-haiku-4-5-20251001',
+    itemDeep: 'claude-sonnet-5',
+    validateShallow: 'claude-sonnet-5',
+    validateDeep: 'claude-sonnet-5',
+    grade: 'claude-sonnet-5',
+    summary: 'Opus draws the blueprint. Nothing else touches it, grader included.',
+  },
+};
+
+export const DEFAULT_STRATEGY = 'shipped';
+
+export function strategyName(): string {
+  const raw = process.env.GYM_STRATEGY?.trim().toLowerCase();
+  return raw && raw in STRATEGIES ? raw : DEFAULT_STRATEGY;
+}
+
+export function activeStrategy(): ModelStrategy {
+  return STRATEGIES[strategyName()];
+}
+
+/**
+ * The depth at and above which item writing and validation escalate.
  *
  * D1-D3 are recall, comprehension and application: given a well-drawn node and a
  * source excerpt, writing those is a constrained task. D4 and D5 are boundary and
@@ -41,25 +161,16 @@ export const DEFAULT_ITEM_MODEL = 'claude-sonnet-5';
  */
 export const STRONG_FROM_DEPTH = 4;
 
+/** Item writing at the shallow depths under the default strategy. */
+export const DEFAULT_ITEM_MODEL = STRATEGIES[DEFAULT_STRATEGY].itemShallow;
+
 /**
  * Which model runs which call.
  *
- * Not everything here is the same kind of work. The blueprint is the hardest
- * reasoning in the system and everything downstream inherits its errors. The
- * validator is the quality gate. Writing a D1 recall item against a finished
- * blueprint is not in the same class, and paying Opus latency for it is the reason a
- * session feels slow.
- *
- * A second, less obvious reason to split them: generator and validator sharing a
- * model means sharing blind spots. An item whose flaw is invisible to Opus is
- * invisible to an Opus validator too. Different models on the two sides makes the
- * agreement check mean slightly more than it did.
- *
- *   GYM_MODEL            the fallback for everything (kept, so one variable still works)
- *   GYM_MODEL_ITEM       default claude-sonnet-5, D1-D3 only
- *   GYM_MODEL_BLUEPRINT  default GYM_MODEL
- *   GYM_MODEL_VALIDATE   default GYM_MODEL
- *   GYM_MODEL_GRADE      default GYM_MODEL
+ * Precedence: an explicit GYM_MODEL_<KIND> beats the strategy, and the strategy beats
+ * GYM_MODEL. Depth chooses between a strategy's shallow and deep slots, and is
+ * ignored once a kind has been named explicitly — someone who says
+ * GYM_MODEL_ITEM=claude-opus-5 has said what they want at every depth.
  */
 export function modelFor(
   kind: 'item' | 'blueprint' | 'validate' | 'grade',
@@ -68,12 +179,23 @@ export function modelFor(
   const explicit = process.env[`GYM_MODEL_${kind.toUpperCase()}`]?.trim();
   if (explicit) return explicit;
 
-  // Depth is the escalation rule, and it only applies to the default. Someone who
-  // names a model for items has said what they want at every depth.
-  if (kind === 'item' && depth !== undefined && depth < STRONG_FROM_DEPTH) {
-    return DEFAULT_ITEM_MODEL;
-  }
-  return model();
+  const s = activeStrategy();
+  const deep = depth === undefined || depth >= STRONG_FROM_DEPTH;
+
+  const slot =
+    kind === 'item'
+      ? deep
+        ? s.itemDeep
+        : s.itemShallow
+      : kind === 'validate'
+        ? deep
+          ? s.validateDeep
+          : s.validateShallow
+        : kind === 'blueprint'
+          ? s.blueprint
+          : s.grade;
+
+  return slot === STRONG ? model() : slot;
 }
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';

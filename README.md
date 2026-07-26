@@ -26,9 +26,9 @@ npm run worker                    # in a second terminal — keeps the item buff
 | Variable | Default | |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | required, server-side only |
-| `GYM_MODEL` | `claude-opus-5` | fallback for any call site not named below |
-| `GYM_MODEL_ITEM` | — | overrides the D1–D3 Sonnet / D4–D6 Opus split at every depth |
-| `GYM_MODEL_BLUEPRINT` · `_VALIDATE` · `_GRADE` | `GYM_MODEL` | |
+| `GYM_STRATEGY` | `shipped` | model assignment preset: `reference` · `shipped` · `split-gate` · `sonnet-gate` · `economy` · `floor` |
+| `GYM_MODEL` | `claude-opus-5` | what a strategy means by "the strong model" |
+| `GYM_MODEL_ITEM` · `_BLUEPRINT` · `_VALIDATE` · `_GRADE` | — | override one call site, beating the strategy |
 | `GYM_DB` | `./data/gym.db` | |
 | `GYM_BUFFER_TARGET` | `3` | validated, unserved items kept ready per plausibly-due cell |
 | `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12 |
@@ -46,7 +46,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 135 tests, no network
+npm test          # 145 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -192,9 +192,17 @@ Opus validator too. What the gate cannot catch is *shallowness* — a well-forme
 correctly keyed, boring item — so the rejection rate per node on the item-health screen
 is the number to watch when changing this.
 
-`GYM_MODEL_*`, `GYM_EFFORT_*` and `GYM_BUFFER_CONCURRENCY` override the defaults, and
+Six assignments ship as named strategies, from `reference` (all Opus) down to `floor`,
+selected with one variable. `npx tsx scripts/cost-model.ts` prices them; `--measured`
+re-runs the same arithmetic against your own recorded token counts instead of the
+built-in assumptions. Every strategy keeps the blueprint on the strong model, and a test
+enforces that. `GYM_MODEL_*` and `GYM_EFFORT_*` override whatever a strategy says, and
 `/api/health` reports which model ran which call alongside median and worst-case
 generation times, so the question can be settled with a number.
+
+Worth knowing before reaching for it: **an older Opus is not a cheaper Opus** — the list
+price has historically been flat across Opus generations, so substituting 4.1 for 5
+saves nothing. A current Sonnet is the lever that moves.
 
 ---
 
@@ -255,7 +263,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 135 tests, no network, ~1.8s
+npm test                 # 145 tests, no network, ~1.8s
 npm run test:grader      # the grader regression set against the live model
 ```
 
