@@ -306,7 +306,6 @@ export async function fillSessionNeed(
   opts: { maxGenerations?: number; concurrency?: number } = {}
 ): Promise<TopUpReport> {
   const report: TopUpReport = { generated: 0, failed: 0, skipped: 0 };
-  const inFlight = cellsInFlight(db);
   const need = planNeed(cellIds);
 
   // Default to covering the whole request. A fixed cap of 12 here silently left 6-8
@@ -322,9 +321,21 @@ export async function fillSessionNeed(
 
   for (const [cellId, needed] of need) {
     if (budgeted >= maxGenerations) break;
-    // A cell already being generated — in a batch, or by an overlapping synchronous
-    // pass — must not be generated again here: that is the same items bought twice.
-    if (inFlight.has(cellId) || isGenerating(cellId)) {
+
+    // Only a SYNCHRONOUS generation counts as covering this cell.
+    //
+    // A pending Batch API request does not, and treating it as though it did was the
+    // bug behind "question two took a long time again". The worker submits a batch for
+    // the plausibly-due cells on every tick, and those are exactly the cells a session
+    // plans — so in steady state there is almost always one open. Skipping them left
+    // the warm generating nothing at all, and every early item was then produced
+    // inline while the learner watched. Measured: four of the first four items.
+    //
+    // Batches take minutes and are allowed 26 hours. A session cannot wait for one.
+    // Generating anyway can duplicate an item the batch later delivers — the batch's
+    // copy simply lands in the buffer for next time, which costs cents. An unusable
+    // session costs the product.
+    if (isGenerating(cellId)) {
       report.skipped++;
       continue;
     }

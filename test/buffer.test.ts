@@ -298,7 +298,14 @@ describe('serving a session never builds depth', () => {
     expect(handle.calls.length - before).toBe(0);
   });
 
-  it('skips a cell whose items are already being written in a batch', async () => {
+  it('covers a cell even when a batch for it is pending, because a batch is minutes away', async () => {
+    // The inverse of what this test used to assert, and the reason question two kept
+    // being slow. The worker puts the plausibly-due cells into a batch every tick, and
+    // those are the cells a session plans — so treating a pending batch as coverage
+    // left the warm doing nothing and every early item generated inline.
+    //
+    // A duplicate item costs cents and lands in the buffer for next time. A session
+    // that makes the learner wait on every question costs the product.
     const { db, conceptId, nodeIds } = makeFixture(2);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
@@ -307,7 +314,6 @@ describe('serving a session never builds depth', () => {
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
-    // Pretend a batch is mid-flight for this cell.
     db.prepare(
       `INSERT INTO gen_batches (provider_batch_id, phase, payload, created_at)
        VALUES ('b1', 'generate', ?, '2026-01-01T00:00:00.000Z')`
@@ -319,10 +325,33 @@ describe('serving a session never builds depth', () => {
 
     const report = await fillSessionNeed(db, conceptId, [cell.id], { concurrency: 1 });
 
-    // Paying twice for the same items is the failure mode here.
-    expect(report.generated).toBe(0);
-    expect(report.skipped).toBe(1);
-    expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(0);
+    expect(report.generated).toBe(1);
+    expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(1);
+  });
+
+  it('skips a cell another synchronous pass is already writing', async () => {
+    // A synchronous generation lands in seconds, and nextItem can await it — so this
+    // one really is coverage, and generating again would buy the same items twice.
+    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(async (req) => {
+      await new Promise((r) => setTimeout(r, 25));
+      return handler(req);
+    });
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    // Two overlapping fills, the second started without awaiting the first.
+    const [a, b] = await Promise.all([
+      fillSessionNeed(db, conceptId, [cell.id], { concurrency: 1 }),
+      fillSessionNeed(db, conceptId, [cell.id], { concurrency: 1 }),
+    ]);
+
+    expect(a.generated + b.generated).toBe(1);
+    expect(a.skipped + b.skipped).toBe(1);
+    expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(1);
   });
 });
 

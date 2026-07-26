@@ -12,18 +12,74 @@
  * serve the plan, and how many calls that took.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { makeFakeLlm } from './fakeLlm';
 import { makeFixture } from './helpers';
 import { setTransport } from '../lib/llm/client';
 import { nextItem, startSession } from '../lib/pipeline/session';
 import { submitMcResponse } from '../lib/pipeline/respond';
 import { listSessionPlan } from '../lib/db/queries';
+import { setBatchTransport } from '../lib/llm/batch';
+import { submitGenerationBatch } from '../lib/pipeline/batchFill';
+import { dueShortfalls } from '../lib/pipeline/buffer';
+import { resetCellLocks } from '../lib/pipeline/cellLock';
 
 /** One model call. Real ones are 15-30s; scaled 100x so the suite stays fast. */
 const CALL_MS = 200;
 /** Time the learner spends on a question. 25s real — a realistic ratio, not a kind one. */
 const ANSWER_MS = 250;
+
+afterEach(() => {
+  setTransport(null);
+  setBatchTransport(null);
+  resetCellLocks();
+});
+
+/**
+ * The steady state on a live deployment, and the one the first version of this file
+ * failed to model: the worker submits a Batch API request for the plausibly-due cells
+ * every tick, and those are exactly the cells a session plans. So there is almost
+ * always an open batch covering the plan.
+ *
+ * fillSessionNeed used to treat a pending batch as covering the cell. Batches take
+ * minutes and are allowed 26 hours, so that left the warm generating nothing and every
+ * early item produced inline while the learner watched — four of the first four.
+ */
+describe('a session started while a worker batch is pending', () => {
+  it('still covers its own plan', async () => {
+    const { db, conceptId } = makeFixture(8);
+    const { handler } = makeFakeLlm();
+    setTransport(async (req) => {
+      await new Promise((r) => setTimeout(r, CALL_MS));
+      return handler(req);
+    });
+
+    // A batch that never returns — indistinguishable, from the session's point of
+    // view, from one that will land in ten minutes.
+    setBatchTransport({
+      async submit() {
+        return 'pending-forever';
+      },
+      async poll() {
+        return null;
+      },
+    });
+
+    await submitGenerationBatch(db, dueShortfalls(db, conceptId, { maxGenerations: 40 }));
+
+    const started = startSession(db, conceptId, { length: 20 });
+    let waits = 0;
+    for (let n = 1; n <= 4; n++) {
+      const t0 = Date.now();
+      await nextItem(db, started.sessionId);
+      if (Date.now() - t0 > CALL_MS) waits++;
+      await new Promise((r) => setTimeout(r, ANSWER_MS));
+    }
+
+    // One is the floor: nothing is banked, so the first question must be written.
+    expect(waits, `learner waited ${waits} times with a batch pending`).toBeLessThanOrEqual(1);
+  }, 60_000);
+});
 
 describe('a cold session', () => {
   it('makes the learner wait once, and buys each item exactly once', async () => {
