@@ -1,5 +1,5 @@
 import type { JsonSchema } from '../llm/schema';
-import { effortFor, type StructuredCall } from '../llm/client';
+import { effortFor, modelFor, type StructuredCall } from '../llm/client';
 import { depthLadderText } from './depth';
 
 export interface BlueprintInput {
@@ -120,5 +120,6 @@ export function buildBlueprintCall(input: BlueprintInput): StructuredCall {
     schema: BLUEPRINT_SCHEMA,
     maxTokens: 32000,
     effort: effortFor('blueprint'),
+    model: modelFor('blueprint'),
   };
 }

@@ -26,7 +26,9 @@ npm run worker                    # in a second terminal — keeps the item buff
 | Variable | Default | |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | required, server-side only |
-| `GYM_MODEL` | `claude-opus-5` | |
+| `GYM_MODEL` | `claude-opus-5` | fallback for any call site not named below |
+| `GYM_MODEL_ITEM` | — | overrides the D1–D3 Sonnet / D4–D6 Opus split at every depth |
+| `GYM_MODEL_BLUEPRINT` · `_VALIDATE` · `_GRADE` | `GYM_MODEL` | |
 | `GYM_DB` | `./data/gym.db` | |
 | `GYM_BUFFER_TARGET` | `3` | validated, unserved items kept ready per plausibly-due cell |
 | `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12 |
@@ -41,7 +43,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 116 tests, no network
+npm test          # 124 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -173,12 +175,23 @@ when it is empty, which after the first session on a concept should be rare. If
 generation fails, the slot is dropped, the session continues, and the reason is shown
 rather than swallowed.
 
-Reasoning effort is set per call site and is the latency dial: item generation defaults
-to `medium`, while the blueprint, the validator and the grader stay at `high`. Those
-three are where a shortcut is expensive — and a weaker validator is *slower* as well as
-worse, because it rejects sound items and each rejection costs two more calls.
-`GYM_EFFORT_*` and `GYM_BUFFER_CONCURRENCY` override the defaults; `/api/health` reports
-median and worst-case generation times so the question can be settled with a number.
+**Model and effort are chosen per call site, not globally.** They are not all the same
+work. The blueprint is the hardest reasoning in the system and everything downstream
+inherits its errors; the validator is the gate; the grader is invariant 9. Writing a D1
+recall item against a finished blueprint is not in that class, so **D1–D3 items go to
+Sonnet and D4–D6 escalate to Opus** — boundary and discrimination items live or die on
+distractors that are nearly right, which is the judgment a smaller model is worst at.
+Effort follows the same shape: `medium` for item writing, `high` for the other three.
+
+The split buys independence as well as speed. A generator and a validator on the same
+model share blind spots, and an item whose flaw is invisible to Opus is invisible to an
+Opus validator too. What the gate cannot catch is *shallowness* — a well-formed,
+correctly keyed, boring item — so the rejection rate per node on the item-health screen
+is the number to watch when changing this.
+
+`GYM_MODEL_*`, `GYM_EFFORT_*` and `GYM_BUFFER_CONCURRENCY` override the defaults, and
+`/api/health` reports which model ran which call alongside median and worst-case
+generation times, so the question can be settled with a number.
 
 ---
 
@@ -230,7 +243,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 116 tests, no network, ~1.5s
+npm test                 # 124 tests, no network, ~1.7s
 npm run test:grader      # the grader regression set against the live model
 ```
 

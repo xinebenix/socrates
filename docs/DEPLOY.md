@@ -221,10 +221,25 @@ command, paste the output, I read it. Slower, and fine.
 
 ## Latency, and the dials that change it
 
-Every call is Opus. An item is **two sequential calls** — write it, then blind-validate
-it — and a blueprint is one large one. That is the floor, and it is a deliberate floor:
-the validator is what keeps broken items out, and the blueprint is what everything
-downstream inherits from.
+An item is **two sequential calls** — write it, then blind-validate it — and a blueprint
+is one large one.
+
+Not all of those are the same work, so they no longer all run on the same model. The
+blueprint is the hardest reasoning in the system and everything downstream inherits its
+errors. The validator is the gate. The grader is invariant 9. Writing a **D1 recall item
+against a finished blueprint** is not in that class — the hard thinking already happened
+when the node was drawn — so D1–D3 items go to Sonnet and D4–D6 escalate back to Opus,
+because boundary and discrimination items live or die on distractors that are nearly
+right, and that is the judgment a smaller model is worst at.
+
+There is a quality argument for the split as well as a cost one: a generator and a
+validator on the same model share blind spots, and an item whose flaw is invisible to
+Opus is invisible to an Opus validator too.
+
+The thing the gate does *not* catch is shallowness. A weaker generator's items can be
+well-formed, unambiguous, correctly keyed — and boring. Watch the rejection rate per
+node on the item-health screen, and read a few D3 items yourself before trusting the
+setting.
 
 So the strategy is to move the waiting off the answer path rather than to think less.
 Items are generated concurrently, planning a session immediately starts filling that
@@ -236,6 +251,13 @@ Read `latency` in the health payload before turning anything:
 
 ```jsonc
 "latency": {
+  "models": {
+    "itemShallow": "claude-sonnet-5",   // D1-D3
+    "itemDeep":    "claude-opus-5",     // D4-D6
+    "blueprint":   "claude-opus-5",
+    "validate":    "claude-opus-5",
+    "grade":       "claude-opus-5"
+  },
   "effort": { "item": "medium", "blueprint": "high", "validate": "high", "grade": "high" },
   "bufferConcurrency": 4,
   "item":      { "n": 50, "medianMs": 41000, "maxMs": 138000 },
@@ -251,6 +273,11 @@ not the dial.
 | Variable | Default | What it costs you |
 |---|---|---|
 | `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12. The cheapest speedup, until you hit your account's rate limit — then it produces 429s and gets slower |
+| `GYM_MODEL` | `claude-opus-5` | the fallback for every call site that has not been named individually |
+| `GYM_MODEL_ITEM` | *(unset)* | naming a model here overrides the depth rule at **every** depth. Set it to `claude-opus-5` to put item writing back the way it was, or to `claude-sonnet-5` to use the cheaper model at D4–D6 too |
+| `GYM_MODEL_BLUEPRINT` | `GYM_MODEL` | the one place a shortcut compounds — every item inherits the map |
+| `GYM_MODEL_VALIDATE` | `GYM_MODEL` | **leave it on the strong model.** It is the gate, and a weaker one rejects sound items at two calls a rejection |
+| `GYM_MODEL_GRADE` | `GYM_MODEL` | leave it. Invariant 9 |
 | `GYM_EFFORT_ITEM` | `medium` | `low` is noticeably faster and the items get blander. This is the hot path, so it is the dial with the most effect |
 | `GYM_EFFORT_BLUEPRINT` | `high` | `medium` roughly halves the one-time wait. It is also the one place a shortcut compounds — every item inherits the map's errors |
 | `GYM_EFFORT_VALIDATE` | `high` | **leave it.** A weaker validator rejects sound items, and each rejection costs two more calls — lowering this can make generation slower as well as worse |

@@ -13,6 +13,8 @@ export interface StructuredCall {
   maxTokens?: number;
   /** low | medium | high | xhigh | max. Generation and grading want thoroughness. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  /** Overrides GYM_MODEL for this call site. See modelFor(). */
+  model?: string;
 }
 
 export interface StructuredResult<T> {
@@ -24,6 +26,54 @@ export interface StructuredResult<T> {
 
 export function model(): string {
   return process.env.GYM_MODEL ?? DEFAULT_MODEL;
+}
+
+/** Item writing at the shallow depths, where the blueprint has done the hard part. */
+export const DEFAULT_ITEM_MODEL = 'claude-sonnet-5';
+
+/**
+ * The depth at and above which item writing escalates to the strong model.
+ *
+ * D1-D3 are recall, comprehension and application: given a well-drawn node and a
+ * source excerpt, writing those is a constrained task. D4 and D5 are boundary and
+ * discrimination — the whole point of them is that the distractors are nearly right,
+ * which is exactly the judgment a smaller model is worst at. D6 is critique.
+ */
+export const STRONG_FROM_DEPTH = 4;
+
+/**
+ * Which model runs which call.
+ *
+ * Not everything here is the same kind of work. The blueprint is the hardest
+ * reasoning in the system and everything downstream inherits its errors. The
+ * validator is the quality gate. Writing a D1 recall item against a finished
+ * blueprint is not in the same class, and paying Opus latency for it is the reason a
+ * session feels slow.
+ *
+ * A second, less obvious reason to split them: generator and validator sharing a
+ * model means sharing blind spots. An item whose flaw is invisible to Opus is
+ * invisible to an Opus validator too. Different models on the two sides makes the
+ * agreement check mean slightly more than it did.
+ *
+ *   GYM_MODEL            the fallback for everything (kept, so one variable still works)
+ *   GYM_MODEL_ITEM       default claude-sonnet-5, D1-D3 only
+ *   GYM_MODEL_BLUEPRINT  default GYM_MODEL
+ *   GYM_MODEL_VALIDATE   default GYM_MODEL
+ *   GYM_MODEL_GRADE      default GYM_MODEL
+ */
+export function modelFor(
+  kind: 'item' | 'blueprint' | 'validate' | 'grade',
+  depth?: number
+): string {
+  const explicit = process.env[`GYM_MODEL_${kind.toUpperCase()}`]?.trim();
+  if (explicit) return explicit;
+
+  // Depth is the escalation rule, and it only applies to the default. Someone who
+  // names a model for items has said what they want at every depth.
+  if (kind === 'item' && depth !== undefined && depth < STRONG_FROM_DEPTH) {
+    return DEFAULT_ITEM_MODEL;
+  }
+  return model();
 }
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -62,7 +112,7 @@ export function effortFor(kind: 'item' | 'blueprint' | 'validate' | 'grade'): Ef
  */
 export function buildRequest(call: StructuredCall): Record<string, unknown> {
   return {
-    model: model(),
+    model: call.model ?? model(),
     max_tokens: call.maxTokens ?? 16000,
     system: call.system,
     messages: [{ role: 'user', content: call.user }],

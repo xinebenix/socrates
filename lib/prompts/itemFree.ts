@@ -1,5 +1,5 @@
 import type { JsonSchema } from '../llm/schema';
-import { effortFor, type StructuredCall } from '../llm/client';
+import { effortFor, modelFor, type StructuredCall } from '../llm/client';
 
 export interface FreeItemInput {
   nodeTitle: string;
@@ -81,5 +81,7 @@ export function buildFreeItemCall(input: FreeItemInput): StructuredCall {
     schema: FREE_ITEM_SCHEMA,
     maxTokens: 8000,
     effort: effortFor('item'),
+    // D6 is critique — always the strong model.
+    model: modelFor('item', 6),
   };
 }

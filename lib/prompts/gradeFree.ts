@@ -1,5 +1,5 @@
 import type { JsonSchema } from '../llm/schema';
-import { effortFor, type StructuredCall } from '../llm/client';
+import { effortFor, modelFor, type StructuredCall } from '../llm/client';
 import type { RubricCriterion } from '../db/types';
 
 export const FREE_PASS_THRESHOLD = 0.8;
@@ -98,6 +98,7 @@ export function buildGradeFreeCall(input: GradeFreeInput): StructuredCall {
     schema: GRADER_SCHEMA,
     maxTokens: 8000,
     effort: effortFor('grade'),
+    model: modelFor('grade'),
   };
 }
 
