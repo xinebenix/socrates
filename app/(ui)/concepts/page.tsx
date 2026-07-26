@@ -30,7 +30,7 @@ export default async function ConceptsPage() {
 
   return (
     <div className="shell">
-      <Topbar subtitle={t.chrome.subtitleDefault} />
+      <Topbar subtitle={t.concepts.topbarSubtitle} />
       <main className="page">
         <div className="column rise">
           <div className="row gap-14" style={{ marginBottom: 24 }}>

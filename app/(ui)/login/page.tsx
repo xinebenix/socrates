@@ -14,7 +14,7 @@ export default async function LoginPage({
 
   return (
     <div className="shell">
-      <Topbar subtitle={t.chrome.subtitleDefault} spend={false} />
+      <Topbar subtitle={t.concepts.topbarSubtitle} spend={false} />
       <main className="page">
         <div className="column narrow rise" style={{ maxWidth: 520 }}>
           <div className="row gap-14" style={{ marginBottom: 24 }}>
