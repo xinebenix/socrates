@@ -1,0 +1,38 @@
+{
+  "name": "socrates",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Socrates — a mental gym. Retrieval-practice training system for conceptual mastery.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "worker": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.env workers/pregenerate.ts",
+    "migrate": "tsx --env-file-if-exists=.env.local lib/db/migrate-cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:grader": "GYM_RUN_LLM_TESTS=1 vitest run test/grader.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "better-sqlite3": "^13.0.1",
+    "next": "^16.2.12",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
+  }
+}
