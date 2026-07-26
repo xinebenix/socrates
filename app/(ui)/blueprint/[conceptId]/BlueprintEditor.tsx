@@ -10,18 +10,167 @@ import { DEPTHS } from '@/lib/prompts/depth';
 
 type NodeWithMisconceptions = NodeRow & { misconceptions: MisconceptionRow[] };
 
+/**
+ * The degraded-mode warning used to end with "add source text on the concept and
+ * regenerate", which was advice the interface did not let you take — source text was
+ * settable at creation and nowhere else. Since a source-less blueprint is the single
+ * biggest quality problem the system can have, the instruction and the control to
+ * follow it belong in the same box.
+ */
+function SourceTextPanel({
+  conceptId,
+  hasSource,
+  initialSource,
+  initialNote,
+  onSaved,
+}: {
+  conceptId: number;
+  hasSource: boolean;
+  initialSource: string;
+  initialNote: string;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(initialSource);
+  const [note, setNote] = useState(initialNote);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(thenRegenerate: boolean) {
+    if (!text.trim()) {
+      setError('Nothing to save — paste the material first.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/concepts/${conceptId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sourceText: text, sourceNote: note }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'save failed');
+      setOpen(false);
+      // Saving alone changes nothing about the existing blueprint — it was drawn
+      // without this text. Regeneration is what actually makes the source count.
+      if (thenRegenerate) onSaved();
+      else window.location.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="stack gap-14">
+      {!hasSource && (
+        <div className="warnbox">
+          This concept has no source text. Generation is running in a degraded mode: items will
+          test the canonical textbook version and systematically miss whatever is idiosyncratic
+          about your own material.
+          {!open && (
+            <div style={{ marginTop: 12 }}>
+              <button type="button" className="btn small" onClick={() => setOpen(true)}>
+                Add source text
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {hasSource && !open && (
+        <div className="row wrap gap-9">
+          <button type="button" className="btn small" onClick={() => setOpen(true)}>
+            Edit source text
+          </button>
+          <span className="note">
+            Changing it does not change the existing map — regenerate afterwards to redraw
+            against the new material.
+          </span>
+        </div>
+      )}
+
+      {open && (
+        <div className="panel">
+          <p className="section-label" style={{ marginTop: 0, marginBottom: 16 }}>
+            Source material
+          </p>
+          <div style={{ marginBottom: 16 }}>
+            <textarea
+              id="blueprint-source-text"
+              className="field"
+              rows={14}
+              value={text}
+              disabled={busy}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Paste the chapter, paper, lecture notes, or documentation you are learning this from. Every node and every item is grounded in this."
+            />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label className="field-label" htmlFor="blueprint-source-note">
+              Where it came from
+            </label>
+            <input
+              id="blueprint-source-note"
+              className="field"
+              value={note}
+              disabled={busy}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Ch. 4 of …  (add [contested] to force the politically-neutral prompt variant)"
+            />
+          </div>
+
+          {error && <div className="warnbox" style={{ marginBottom: 16 }}>{error}</div>}
+
+          <div className="row wrap gap-9">
+            <button
+              type="button"
+              className="btn small primary"
+              disabled={busy}
+              onClick={() => void save(true)}
+            >
+              {busy ? 'Saving…' : 'Save and redraw the map'}
+            </button>
+            <button
+              type="button"
+              className="btn small"
+              disabled={busy}
+              onClick={() => void save(false)}
+            >
+              Save only
+            </button>
+            <button type="button" className="btn small" disabled={busy} onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+          <p className="note" style={{ marginTop: 12 }}>
+            Redrawing merges rather than replaces: nodes that survive keep their mastery,
+            scheduling and response history.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BlueprintEditor({
   conceptId,
   initialNodes,
   initialGrid,
   alarm,
   hasSource,
+  initialSource,
+  initialNote,
 }: {
   conceptId: number;
   initialNodes: NodeWithMisconceptions[];
   initialGrid: GridRow[];
   alarm: string | null;
   hasSource: boolean;
+  initialSource: string;
+  initialNote: string;
 }) {
   const router = useRouter();
   const [nodes, setNodes] = useState(initialNodes);
@@ -72,13 +221,14 @@ export function BlueprintEditor({
 
   return (
     <div className="stack gap-22">
-      {!hasSource && (
-        <div className="warnbox">
-          This concept has no source text. Generation is running in a degraded mode: items will
-          test the canonical textbook version and systematically miss whatever is idiosyncratic
-          about your own material. Add source text on the concept and regenerate.
-        </div>
-      )}
+      <SourceTextPanel
+        conceptId={conceptId}
+        hasSource={hasSource}
+        initialSource={initialSource}
+        initialNote={initialNote}
+        onSaved={() => void regenerate()}
+      />
+
 
       {alarm && <div className="warnbox">{alarm}</div>}
       {error && <div className="warnbox">{error}</div>}

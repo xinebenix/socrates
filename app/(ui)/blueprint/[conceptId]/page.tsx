@@ -47,6 +47,8 @@ export default async function BlueprintPage({
             initialGrid={buildGrid(db, conceptId)}
             alarm={blueprintAlarm(db, conceptId)}
             hasSource={Boolean(concept.source_text && concept.source_text.trim())}
+            initialSource={concept.source_text ?? ''}
+            initialNote={concept.source_note ?? ''}
           />
         </div>
       </main>
