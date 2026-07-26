@@ -14,6 +14,7 @@ import { buildValidationCall, gate } from '../prompts/validate';
 import { tooSimilar } from '../analysis/similarity';
 import { selectExcerpt, looksContested } from '../source';
 import type { ItemRow, ValidatorVerdict } from '../db/types';
+import { logEvent } from '../ops';
 import {
   activeMisconceptions,
   getCell,
@@ -130,12 +131,15 @@ export async function generateMcItem(db: Db, cellId: number): Promise<Generation
     return { item, attempts, rejections, error: null };
   }
 
-  return {
-    item: null,
+  const error = `generation failed after ${attempts} attempts`;
+  logEvent(db, 'warn', 'generate.mc_failed', {
+    cellId,
+    node: ctx.node.title,
+    depth: ctx.cell.depth,
     attempts,
-    rejections,
-    error: `generation failed after ${attempts} attempts`,
-  };
+    reasons: rejections.flatMap((r) => r.reasons),
+  });
+  return { item: null, attempts, rejections, error };
 }
 
 function checkMcShape(gen: McItemOut): string | null {

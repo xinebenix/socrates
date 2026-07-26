@@ -38,10 +38,12 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 87 tests, no network
+npm test          # 110 tests, no network
 npm run typecheck
 npm run build
 ```
+
+Deploying it somewhere: see **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 
 ---
 
@@ -213,11 +215,11 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 87 tests, no network, ~1.5s
+npm test                 # 110 tests, no network, ~1.5s
 npm run test:grader      # the grader regression set against the live model
 ```
 
-`npm test` covers every acceptance test in the spec except the live half of AT9. The
+`npm test` covers every acceptance test in the spec except the live half of AT9, plus the access gate. The
 BKT worked examples and the SM-2 progression (1 → 3 → 7.8 → 20.67, ease 2.55 → 2.60 →
 2.65 → 2.70) are asserted exactly, including the ordering subtlety that the third
 interval uses the ease already in effect rather than the default.

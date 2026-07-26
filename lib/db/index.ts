@@ -1,33 +1,38 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SCHEMA_SQL } from './schema';
 
 export type Db = Database.Database;
 
-const SCHEMA_PATH = path.join(process.cwd(), 'lib', 'db', 'schema.sql');
-
 let singleton: Db | null = null;
+
+export function dbPath(): string {
+  return process.env.GYM_DB ?? './data/gym.db';
+}
 
 export function openDb(file: string): Db {
   if (file !== ':memory:') {
     fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   }
   const db = new Database(file);
+  // WAL needs a writable directory, not just a writable file. On a container with a
+  // read-only mount this is where you find out, which is the point.
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
   migrate(db);
   return db;
 }
 
 export function migrate(db: Db): void {
-  const sql = fs.readFileSync(SCHEMA_PATH, 'utf8');
-  db.exec(sql);
+  db.exec(SCHEMA_SQL);
 }
 
 /** The process-wide handle used by API routes and the worker. */
 export function getDb(): Db {
   if (!singleton) {
-    singleton = openDb(process.env.GYM_DB ?? './data/gym.db');
+    singleton = openDb(dbPath());
   }
   return singleton;
 }
