@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Socrates — a mental gym. Retrieval-practice training system for conceptual mastery.",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

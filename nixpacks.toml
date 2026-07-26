@@ -1,0 +1,11 @@
+# better-sqlite3 ships a binding.gyp and no install script, which means npm's default
+# rule is `node-gyp rebuild` — it will try to compile even when a matching prebuilt
+# binary exists. On the stock Nixpacks image there is no Python, so that attempt is
+# what actually failed the build (the Node version was the reason no prebuild matched).
+#
+# `engines: node 22.x` in package.json fixes the version selection. This file is the
+# belt to that pair of braces: if the gyp path is taken anyway, the toolchain is there.
+# "..." keeps whatever Nixpacks detected rather than replacing it.
+
+[phases.setup]
+nixPkgs = ["...", "python3", "gcc", "gnumake"]
