@@ -17,7 +17,7 @@
  */
 
 import type { Db } from '../db';
-import { countBufferedItems } from '../db/queries';
+import { countReadyItems } from '../db/queries';
 import { plausiblyDueCells } from '../stats';
 import { MAX_ITEMS_PER_CALL } from '../prompts/itemMc';
 import { generateItemsForCell } from './generateItem';
@@ -128,7 +128,7 @@ export function computeShortfalls(
   for (const cellId of orderedCellIds) {
     if (budgeted >= opts.maxGenerations) break;
     if (opts.exclude?.has(cellId)) continue;
-    const have = countBufferedItems(db, cellId, 'mc');
+    const have = countReadyItems(db, cellId);
 
     // Hysteresis: a partly-drained cell is left alone until it reaches the low-water
     // mark, then refilled to the target in a single call. Topping up by one after
@@ -295,7 +295,7 @@ export async function fillSessionNeed(
       report.skipped++;
       continue;
     }
-    const want = needed - countBufferedItems(db, cellId, 'mc');
+    const want = needed - countReadyItems(db, cellId);
     if (want <= 0) {
       report.skipped++;
       continue;

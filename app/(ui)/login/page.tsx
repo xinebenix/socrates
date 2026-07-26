@@ -12,7 +12,7 @@ export default async function LoginPage({
 
   return (
     <div className="shell">
-      <Topbar subtitle="the endless knowledge gym" />
+      <Topbar subtitle="the endless knowledge gym" spend={false} />
       <main className="page">
         <div className="column narrow rise" style={{ maxWidth: 520 }}>
           <div className="row gap-14" style={{ marginBottom: 24 }}>

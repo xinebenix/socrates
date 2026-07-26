@@ -1,13 +1,19 @@
 import Link from 'next/link';
+import { SpendSlot } from './SpendSlot';
 
 export interface ChromeProps {
   subtitle: string;
   conceptId?: number;
   right?: React.ReactNode;
+  /**
+   * Set false on public pages. The spend readout opens the database, which the login
+   * page has no business doing.
+   */
+  spend?: boolean;
 }
 
-/** Sticky header: wordmark, a one-line subtitle, per-concept navigation. */
-export function Topbar({ subtitle, conceptId, right }: ChromeProps) {
+/** Sticky header: wordmark, a one-line subtitle, per-concept navigation, spend. */
+export function Topbar({ subtitle, conceptId, right, spend = true }: ChromeProps) {
   return (
     <header className="topbar">
       <Link href="/concepts" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -33,7 +39,10 @@ export function Topbar({ subtitle, conceptId, right }: ChromeProps) {
         </nav>
       )}
 
-      {right && <div className={conceptId != null ? '' : 'push'}>{right}</div>}
+      <div className={conceptId != null ? 'topbar-end' : 'topbar-end push'}>
+        {spend && <SpendSlot />}
+        {right}
+      </div>
     </header>
   );
 }

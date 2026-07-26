@@ -156,6 +156,30 @@ describe('serving a session never builds depth', () => {
     expect(handle.calls.filter((c) => c.kind === 'item-mc').length).toBe(afterWarm);
   });
 
+  it('counts a D6 cell\'s free-response items, so it is not rebuilt every time', async () => {
+    // The bug this pins: the ready-count hardcoded kind='mc', and a D6 cell's items
+    // are kind='free'. It therefore always counted as empty, so every top-up bought
+    // another D6 item — one per answered question, forever.
+    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const d6 = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 6
+    )!;
+
+    await fillSessionNeed(db, conceptId, [d6.id], { concurrency: 1 });
+    const first = handle.calls.filter((c) => c.kind === 'item-free').length;
+    expect(first).toBe(1);
+
+    // Three more passes over a plan that still wants one D6 item, which is banked.
+    for (let i = 0; i < 3; i++) {
+      await fillSessionNeed(db, conceptId, [d6.id], { concurrency: 1 });
+    }
+
+    expect(handle.calls.filter((c) => c.kind === 'item-free').length).toBe(first);
+  });
+
   it('skips a cell whose items are already being written in a batch', async () => {
     const { db, conceptId, nodeIds } = makeFixture(2);
     const { handle, handler } = makeFakeLlm();

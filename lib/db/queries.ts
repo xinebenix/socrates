@@ -377,6 +377,28 @@ export function countBufferedItems(db: Db, cellId: number, kind: 'mc' | 'free'):
   return row.n;
 }
 
+/**
+ * Ready items for a cell, with the kind derived from the cell's own depth.
+ *
+ * Callers used to pass 'mc' literally, which silently reported 0 for every D6 cell —
+ * their items are kind 'free'. A cell that always counts as empty is regenerated on
+ * every top-up forever, so this quietly bought a fresh D6 item after every answered
+ * question. The CASE mirrors what nextItem asks takeBufferedItem for, so the two can
+ * never disagree about which items count.
+ */
+export function countReadyItems(db: Db, cellId: number): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM items i
+         JOIN cells c ON c.id = i.cell_id
+        WHERE i.cell_id = ? AND i.validated = 1 AND i.frozen = 0 AND i.retired = 0
+          AND i.served_count = 0
+          AND i.kind = CASE WHEN c.depth = 6 THEN 'free' ELSE 'mc' END`
+    )
+    .get(cellId) as { n: number };
+  return row.n;
+}
+
 export function markItemServed(db: Db, itemId: number): void {
   db.prepare(`UPDATE items SET served_count = served_count + 1 WHERE id = ?`).run(itemId);
 }

@@ -754,3 +754,100 @@ table.mini td {
 }
 table.mini th + th, table.mini td + td { padding-left: 18px; }
 table.mini tr:last-child td { border-bottom: none; }
+
+/* ------------------------------------------------------ spend chip + overlay */
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.spend { position: relative; }
+
+/* Sized and weighted like a nav link, because that is what it is. A running cost
+   that draws the eye during a session competes with the thing being trained. */
+.spend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  background: transparent;
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  cursor: pointer;
+  font: 400 11px/1 var(--sans);
+  letter-spacing: 0.06em;
+  color: var(--muted-soft);
+  /* The figure must never wrap: a two-line chip pushes the header taller and shoves
+     the panel's anchor down with it. */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.spend-chip:hover { color: var(--ink); border-color: var(--rule-strong); }
+.spend-chip[aria-expanded='true'] { color: var(--ink); border-color: var(--rule-strong); }
+
+.spend-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--verd);
+}
+.spend-chip.over { color: var(--terra); border-color: rgba(var(--terra-rgb), 0.45); }
+.spend-chip.over .spend-chip-dot { background: var(--terra); }
+
+.spend-chip-limit { color: var(--muted); }
+
+.spend-panel {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 40;
+  width: min(clamp(320px, 92vw, 560px), calc(100vw - 28px));
+  max-height: min(72vh, 640px);
+  overflow-y: auto;
+  padding: 20px 22px 22px;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--slab-shadow);
+}
+
+.spend-close {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: 400 20px/1 var(--sans);
+  color: var(--muted);
+  padding: 0 2px;
+}
+.spend-close:hover { color: var(--ink); }
+
+.spend-bar {
+  margin-top: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(var(--ink-rgb), 0.1);
+  overflow: hidden;
+}
+.spend-bar > div { height: 100%; border-radius: 2px; background: var(--verd); }
+.spend-bar > div.over { background: var(--terra); }
+
+/* On a narrow screen the panel spans the viewport rather than hanging off it. */
+@media (max-width: 620px) {
+  .spend-panel {
+    position: fixed;
+    top: 66px;
+    right: 14px;
+    left: 14px;
+    width: auto;
+    max-height: calc(100vh - 84px);
+  }
+}
+
+/* Tighter still: the budget ceiling is in the panel anyway, so the chip drops it
+   rather than crowding the wordmark. */
+@media (max-width: 480px) {
+  .spend-chip-limit { display: none; }
+}

@@ -267,6 +267,44 @@ export function billingSplit(
   };
 }
 
+export interface SpendSnapshot {
+  /** True when nothing has been spent yet — the caller renders nothing. */
+  empty: boolean;
+  month: string;
+  todayUsd: number;
+  monthUsd: number;
+  monthCalls: number;
+  budget: BudgetStatus;
+  aheadOfUse: { unservedItems: number; estimatedUsd: number };
+  byKind: SpendRow[];
+  billing: ReturnType<typeof billingSplit>;
+}
+
+/**
+ * Everything the spend overlay shows, in one pass.
+ *
+ * Gathered server-side and handed to the client component as plain data — the
+ * database never gets near the browser, and the overlay needs no fetch of its own.
+ */
+export function spendSnapshot(db: Db): SpendSnapshot {
+  const budget = budgetStatus(db);
+  const monthStart = `${budget.month}-01`;
+  const month = totalSpend(db, monthStart);
+  const ahead = unservedItemSpend(db);
+
+  return {
+    empty: month.calls === 0,
+    month: budget.month,
+    todayUsd: totalSpend(db, dayKey()).estimatedUsd,
+    monthUsd: month.estimatedUsd,
+    monthCalls: month.calls,
+    budget,
+    aheadOfUse: { unservedItems: ahead.unservedItems, estimatedUsd: ahead.estimatedUsd },
+    byKind: spendBy(db, 'kind', monthStart),
+    billing: billingSplit(db, monthStart),
+  };
+}
+
 export function dayKey(offsetDays = 0): string {
   const d = new Date(now().getTime() + offsetDays * 86_400_000);
   return iso(d).slice(0, 10);
