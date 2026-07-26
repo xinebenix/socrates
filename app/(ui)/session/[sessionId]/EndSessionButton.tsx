@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useDict } from '@/components/I18nProvider';
 
 export function EndSessionButton({
   sessionId,
@@ -10,6 +11,7 @@ export function EndSessionButton({
   sessionId: number;
   conceptId: number;
 }) {
+  const t = useDict();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
@@ -24,7 +26,7 @@ export function EndSessionButton({
 
   return (
     <button type="button" className="btn small" disabled={busy} onClick={() => void end()}>
-      {busy ? 'Closing…' : "I'm done"}
+      {busy ? t.session.endSessionClosing : t.session.endSession}
     </button>
   );
 }

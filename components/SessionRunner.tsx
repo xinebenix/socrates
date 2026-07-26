@@ -4,14 +4,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Confidence } from '@/lib/mastery/bkt';
 import { canSubmit } from '@/lib/ui/submitGuard';
+import { useDict } from '@/components/I18nProvider';
+import { fill } from '@/lib/i18n/dict';
 import { ItemCard, type FeedbackView, type OptionView } from './ItemCard';
 
-const LOADING_LABELS = [
-  'Considering what you do not yet know',
-  'Framing the next question',
-  'Sharpening the objection',
-  'Choosing the harder case',
-];
+const LOADING_LABEL_KEYS = [
+  'loadingConsidering',
+  'loadingFraming',
+  'loadingSharpening',
+  'loadingHarderCase',
+] as const;
 
 interface ServedItem {
   kind: 'mc' | 'free';
@@ -34,6 +36,7 @@ export function SessionRunner({
   conceptId: number;
   conceptName: string;
 }) {
+  const t = useDict();
   const [item, setItem] = useState<ServedItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadIdx, setLoadIdx] = useState(0);
@@ -61,7 +64,7 @@ export function SessionRunner({
     try {
       const res = await fetch(`/api/session/${sessionId}/next-item`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'could not fetch the next item');
+      if (!res.ok) throw new Error(data.error ?? t.session.errorFetchNextItem);
 
       setKindOfSession(data.kind);
       setProgress(data.progress);
@@ -78,7 +81,7 @@ export function SessionRunner({
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, t]);
 
   useEffect(() => {
     void load();
@@ -86,8 +89,11 @@ export function SessionRunner({
 
   useEffect(() => {
     if (!loading) return;
-    const t = setInterval(() => setLoadIdx((i) => (i + 1) % LOADING_LABELS.length), 2200);
-    return () => clearInterval(t);
+    const timer = setInterval(
+      () => setLoadIdx((i) => (i + 1) % LOADING_LABEL_KEYS.length),
+      2200
+    );
+    return () => clearInterval(timer);
   }, [loading]);
 
   const submit = useCallback(async () => {
@@ -119,7 +125,7 @@ export function SessionRunner({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'could not record that answer');
+      if (!res.ok) throw new Error(data.error ?? t.session.errorRecordAnswer);
 
       setProgress(data.progress);
 
@@ -136,7 +142,7 @@ export function SessionRunner({
     } finally {
       setSubmitting(false);
     }
-  }, [item, confidence, submitting, feedback, selectedOptionId, freeText, sessionId, load]);
+  }, [item, confidence, submitting, feedback, selectedOptionId, freeText, sessionId, load, t]);
 
   // Keyboard: 1-4 pick, G/U/C set confidence, Enter submits then advances.
   useEffect(() => {
@@ -177,21 +183,24 @@ export function SessionRunner({
     return (
       <div className="column narrow rise">
         <p className="eyebrow" style={{ marginBottom: 16 }}>
-          Τέλος — the account of this session
+          {t.session.endEyebrow}
         </p>
         <h1 className="display">{conceptName}</h1>
         <p className="lede">
-          {progress.answered} of {progress.total} planned items answered.
+          {fill(t.session.endItemsAnswered, {
+            answered: progress.answered,
+            total: progress.total,
+          })}{' '}
           {kindOfSession === 'benchmark'
-            ? ' The benchmark result is on the benchmark screen.'
-            : ' Mastery estimates and the next due dates have been updated.'}
+            ? t.session.endBenchmarkNote
+            : t.session.endMasteryNote}
         </p>
         <div className="row wrap gap-9">
           <Link className="btn primary" href={`/dashboard/${conceptId}`}>
-            See the dashboard
+            {t.session.seeDashboard}
           </Link>
           <Link className="btn" href={`/concepts`}>
-            Back to concepts
+            {t.session.backToConcepts}
           </Link>
         </div>
       </div>
@@ -209,7 +218,10 @@ export function SessionRunner({
           <span style={{ width: `${pct}%` }} />
         </span>
         <span className="eyebrow tabular" style={{ flex: 'none' }}>
-          {progress.answered}/{progress.total}
+          {fill(t.session.progressCount, {
+            answered: progress.answered,
+            total: progress.total,
+          })}
         </span>
       </div>
 
@@ -217,12 +229,12 @@ export function SessionRunner({
         <div className="warnbox" style={{ marginBottom: 16 }}>
           <p style={{ margin: '0 0 12px' }}>{error}</p>
           <button type="button" className="btn danger small" onClick={() => void load()}>
-            Ask again
+            {t.session.askAgain}
           </button>
         </div>
       )}
 
-      {loading && <LoadingSlab label={LOADING_LABELS[loadIdx]} />}
+      {loading && <LoadingSlab label={t.session[LOADING_LABEL_KEYS[loadIdx]]} />}
 
       {!loading && item && (
         <ItemCard

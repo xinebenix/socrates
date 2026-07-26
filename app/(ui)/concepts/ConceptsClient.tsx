@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useDict } from '@/components/I18nProvider';
+import { fill } from '@/lib/i18n/dict';
 
 export interface ConceptSummary {
   id: number;
@@ -15,6 +17,7 @@ export interface ConceptSummary {
 }
 
 export function NewConceptForm() {
+  const t = useDict();
   const router = useRouter();
   const [name, setName] = useState('');
   const [sourceText, setSourceText] = useState('');
@@ -29,7 +32,7 @@ export function NewConceptForm() {
     if (!name.trim() || busy) return;
 
     setBusy(true);
-    setStatus('Creating the concept…');
+    setStatus(t.concepts.statusCreating);
     try {
       const res = await fetch('/api/concepts', {
         method: 'POST',
@@ -37,13 +40,10 @@ export function NewConceptForm() {
         body: JSON.stringify({ name: name.trim(), sourceText, sourceNote }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'could not create the concept');
+      if (!res.ok) throw new Error(data.error ?? t.concepts.errorCreateFailed);
 
       const conceptId = data.concept.id as number;
-      setStatus(
-        'Decomposing the source into a blueprint. This takes a minute — it is one large ' +
-          'call, and the map it produces is what every item is generated against.'
-      );
+      setStatus(t.concepts.statusDecomposing);
 
       const bp = await fetch('/api/blueprint', {
         method: 'POST',
@@ -51,7 +51,7 @@ export function NewConceptForm() {
         body: JSON.stringify({ conceptId, hints }),
       });
       const bpData = await bp.json();
-      if (!bp.ok) throw new Error(bpData.error ?? 'blueprint generation failed');
+      if (!bp.ok) throw new Error(bpData.error ?? t.concepts.errorBlueprintFailed);
 
       router.push(`/blueprint/${conceptId}`);
     } catch (err) {
@@ -67,12 +67,12 @@ export function NewConceptForm() {
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Socialism, Bayes' theorem, CSS specificity…"
+          placeholder={t.concepts.nameInputPlaceholder}
           disabled={busy}
-          aria-label="Concept name"
+          aria-label={t.concepts.nameInputAriaLabel}
         />
         <button type="submit" disabled={busy || !name.trim()}>
-          {busy ? 'Working…' : 'Begin'}
+          {busy ? t.concepts.beginButtonBusy : t.concepts.beginButton}
         </button>
       </div>
 
@@ -83,13 +83,10 @@ export function NewConceptForm() {
           onClick={() => setExpanded((v) => !v)}
           disabled={busy}
         >
-          {expanded ? 'Hide source' : 'Add source material'}
+          {expanded ? t.concepts.hideSourceButton : t.concepts.addSourceButton}
         </button>
         {!expanded && !sourceText.trim() && (
-          <span className="note">
-            Without source text, generation falls back to the textbook version of the concept and
-            systematically misses whatever is idiosyncratic about your understanding.
-          </span>
+          <span className="note">{t.concepts.noSourceWarning}</span>
         )}
       </div>
 
@@ -97,7 +94,7 @@ export function NewConceptForm() {
         <div className="panel" style={{ marginTop: 14 }}>
           <div style={{ marginBottom: 16 }}>
             <label className="field-label" htmlFor="source-text">
-              Source material
+              {t.concepts.sourceTextLabel}
             </label>
             <textarea
               id="source-text"
@@ -106,12 +103,12 @@ export function NewConceptForm() {
               value={sourceText}
               disabled={busy}
               onChange={(e) => setSourceText(e.target.value)}
-              placeholder="Paste the chapter, paper, lecture notes, or documentation you are learning this from. Every node and every item is grounded in this."
+              placeholder={t.concepts.sourceTextPlaceholder}
             />
           </div>
           <div style={{ marginBottom: 16 }}>
             <label className="field-label" htmlFor="source-note">
-              Where it came from
+              {t.concepts.sourceNoteLabel}
             </label>
             <input
               id="source-note"
@@ -119,12 +116,12 @@ export function NewConceptForm() {
               value={sourceNote}
               disabled={busy}
               onChange={(e) => setSourceNote(e.target.value)}
-              placeholder="Ch. 4 of …  (add [contested] to force the politically-neutral prompt variant)"
+              placeholder={t.concepts.sourceNotePlaceholder}
             />
           </div>
           <div>
             <label className="field-label" htmlFor="hints">
-              Hints for the decomposition (optional)
+              {t.concepts.hintsLabel}
             </label>
             <input
               id="hints"
@@ -132,7 +129,7 @@ export function NewConceptForm() {
               value={hints}
               disabled={busy}
               onChange={(e) => setHints(e.target.value)}
-              placeholder="e.g. keep the historical material separate from the theoretical claims"
+              placeholder={t.concepts.hintsPlaceholder}
             />
           </div>
         </div>
@@ -148,6 +145,8 @@ export function NewConceptForm() {
 }
 
 export function ConceptList({ concepts }: { concepts: ConceptSummary[] }) {
+  const t = useDict();
+
   return (
     <div className="grid-tiles" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
       {concepts.map((c) => (
@@ -160,13 +159,19 @@ export function ConceptList({ concepts }: { concepts: ConceptSummary[] }) {
               {c.name}
             </Link>
             {c.dueCount > 0 && (
-              <span className="eyebrow-accent push tabular">{c.dueCount} due</span>
+              <span className="eyebrow-accent push tabular">
+                {fill(t.concepts.dueBadge, { count: c.dueCount })}
+              </span>
             )}
           </div>
 
           <div className="row gap-14">
-            <span className="eyebrow tabular">{Math.round(c.coverage * 100)}% covered</span>
-            <span className="eyebrow tabular">{c.nodeCount} nodes</span>
+            <span className="eyebrow tabular">
+              {fill(t.concepts.coveredStat, { percent: Math.round(c.coverage * 100) })}
+            </span>
+            <span className="eyebrow tabular">
+              {fill(t.concepts.nodesStat, { count: c.nodeCount })}
+            </span>
           </div>
 
           <div className="progress">
@@ -175,14 +180,14 @@ export function ConceptList({ concepts }: { concepts: ConceptSummary[] }) {
 
           {!c.hasSource && (
             <span className="note" style={{ color: 'var(--terra)' }}>
-              No source material — degraded mode.
+              {t.concepts.degradedModeNote}
             </span>
           )}
 
           <div className="row wrap gap-6" style={{ marginTop: 4 }}>
             <StartButton conceptId={c.id} disabled={c.nodeCount === 0} />
             <Link className="btn small" href={`/blueprint/${c.id}`}>
-              Blueprint
+              {t.concepts.blueprintLink}
             </Link>
           </div>
         </div>
@@ -195,16 +200,21 @@ export function StartButton({
   conceptId,
   disabled,
   length,
-  label = 'Train',
+  label,
 }: {
   conceptId: number;
   disabled?: boolean;
   length?: number;
   label?: string;
 }) {
+  const t = useDict();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Defaulted here rather than in the parameter list: the dictionary comes from a hook,
+  // which cannot be called while the default expression is evaluated.
+  const buttonLabel = label ?? t.concepts.trainButton;
 
   async function start() {
     setBusy(true);
@@ -216,7 +226,7 @@ export function StartButton({
         body: JSON.stringify({ conceptId, length }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'could not start a session');
+      if (!res.ok) throw new Error(data.error ?? t.concepts.errorSessionStartFailed);
       router.push(`/session/${data.sessionId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -232,7 +242,7 @@ export function StartButton({
         disabled={busy || disabled}
         onClick={() => void start()}
       >
-        {busy ? 'Assembling…' : label}
+        {busy ? t.concepts.trainButtonBusy : buttonLabel}
       </button>
       {error && (
         <span className="note" style={{ color: 'var(--terra)' }}>

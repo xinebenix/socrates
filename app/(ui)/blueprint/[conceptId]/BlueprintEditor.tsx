@@ -7,8 +7,21 @@ import { StartButton } from '../../concepts/ConceptsClient';
 import type { GridCell, GridRow } from '@/lib/stats';
 import type { MisconceptionRow, NodeRow } from '@/lib/db/types';
 import { DEPTHS } from '@/lib/prompts/depth';
+import { useDict } from '@/components/I18nProvider';
+import { fill, type Dict } from '@/lib/i18n/dict';
 
 type NodeWithMisconceptions = NodeRow & { misconceptions: MisconceptionRow[] };
+
+/**
+ * `origin` is a stored enum, not prose, so it is looked up rather than translated in
+ * place. The table is deliberately partial — a value the dictionary has no word for
+ * falls through to the stored token instead of rendering blank.
+ */
+function originLabel(t: Dict, origin: string): string {
+  if (origin === 'generated') return t.blueprint.nodeOriginGenerated;
+  if (origin === 'user') return t.blueprint.nodeOriginUser;
+  return origin;
+}
 
 /**
  * The degraded-mode warning used to end with "add source text on the concept and
@@ -30,6 +43,7 @@ function SourceTextPanel({
   initialNote: string;
   onSaved: () => void;
 }) {
+  const t = useDict();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(initialSource);
   const [note, setNote] = useState(initialNote);
@@ -38,7 +52,7 @@ function SourceTextPanel({
 
   async function save(thenRegenerate: boolean) {
     if (!text.trim()) {
-      setError('Nothing to save — paste the material first.');
+      setError(t.blueprint.nothingToSaveError);
       return;
     }
     setBusy(true);
@@ -50,7 +64,7 @@ function SourceTextPanel({
         body: JSON.stringify({ sourceText: text, sourceNote: note }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'save failed');
+      if (!res.ok) throw new Error(data.error ?? t.blueprint.saveFailedError);
       setOpen(false);
       // Saving alone changes nothing about the existing blueprint — it was drawn
       // without this text. Regeneration is what actually makes the source count.
@@ -67,13 +81,11 @@ function SourceTextPanel({
     <div className="stack gap-14">
       {!hasSource && (
         <div className="warnbox">
-          This concept has no source text. Generation is running in a degraded mode: items will
-          test the canonical textbook version and systematically miss whatever is idiosyncratic
-          about your own material.
+          {t.blueprint.noSourceWarning}
           {!open && (
             <div style={{ marginTop: 12 }}>
               <button type="button" className="btn small" onClick={() => setOpen(true)}>
-                Add source text
+                {t.blueprint.addSourceTextButton}
               </button>
             </div>
           )}
@@ -83,19 +95,16 @@ function SourceTextPanel({
       {hasSource && !open && (
         <div className="row wrap gap-9">
           <button type="button" className="btn small" onClick={() => setOpen(true)}>
-            Edit source text
+            {t.blueprint.editSourceTextButton}
           </button>
-          <span className="note">
-            Changing it does not change the existing map — regenerate afterwards to redraw
-            against the new material.
-          </span>
+          <span className="note">{t.blueprint.sourceChangeNote}</span>
         </div>
       )}
 
       {open && (
         <div className="panel">
           <p className="section-label" style={{ marginTop: 0, marginBottom: 16 }}>
-            Source material
+            {t.blueprint.sourceMaterialLabel}
           </p>
           <div style={{ marginBottom: 16 }}>
             <textarea
@@ -105,12 +114,12 @@ function SourceTextPanel({
               value={text}
               disabled={busy}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Paste the chapter, paper, lecture notes, or documentation you are learning this from. Every node and every item is grounded in this."
+              placeholder={t.blueprint.sourceTextPlaceholder}
             />
           </div>
           <div style={{ marginBottom: 16 }}>
             <label className="field-label" htmlFor="blueprint-source-note">
-              Where it came from
+              {t.blueprint.sourceNoteLabel}
             </label>
             <input
               id="blueprint-source-note"
@@ -118,7 +127,7 @@ function SourceTextPanel({
               value={note}
               disabled={busy}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Ch. 4 of …  (add [contested] to force the politically-neutral prompt variant)"
+              placeholder={t.blueprint.sourceNotePlaceholder}
             />
           </div>
 
@@ -131,7 +140,7 @@ function SourceTextPanel({
               disabled={busy}
               onClick={() => void save(true)}
             >
-              {busy ? 'Saving…' : 'Save and redraw the map'}
+              {busy ? t.blueprint.savingBusy : t.blueprint.saveAndRedrawButton}
             </button>
             <button
               type="button"
@@ -139,15 +148,14 @@ function SourceTextPanel({
               disabled={busy}
               onClick={() => void save(false)}
             >
-              Save only
+              {t.blueprint.saveOnlyButton}
             </button>
             <button type="button" className="btn small" disabled={busy} onClick={() => setOpen(false)}>
-              Cancel
+              {t.blueprint.cancelButton}
             </button>
           </div>
           <p className="note" style={{ marginTop: 12 }}>
-            Redrawing merges rather than replaces: nodes that survive keep their mastery,
-            scheduling and response history.
+            {t.blueprint.redrawMergeNote}
           </p>
         </div>
       )}
@@ -172,6 +180,7 @@ export function BlueprintEditor({
   initialSource: string;
   initialNote: string;
 }) {
+  const t = useDict();
   const router = useRouter();
   const [nodes, setNodes] = useState(initialNodes);
   const [grid, setGrid] = useState(initialGrid);
@@ -180,7 +189,7 @@ export function BlueprintEditor({
   const [error, setError] = useState<string | null>(null);
 
   async function patch(ops: unknown[]) {
-    setBusy('Saving…');
+    setBusy(t.blueprint.savingBusy);
     setError(null);
     try {
       const res = await fetch('/api/blueprint', {

@@ -3,14 +3,37 @@
 import type { Confidence } from '@/lib/mastery/bkt';
 import { canSubmit, submitHint, type SubmitState } from '@/lib/ui/submitGuard';
 import { depth } from '@/lib/prompts/depth';
+import { useDict } from '@/components/I18nProvider';
+import { fill, type Dict } from '@/lib/i18n/dict';
 
 const GREEK = ['Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ'];
 
-const CONFIDENCE_CHOICES: { value: Confidence; key: string; label: string }[] = [
-  { value: 'guessing', key: 'G', label: 'Guessing' },
-  { value: 'unsure', key: 'U', label: 'Unsure' },
-  { value: 'confident', key: 'C', label: 'Confident' },
+const CONFIDENCE_CHOICES: {
+  value: Confidence;
+  key: string;
+  labelKey: keyof Dict['session'];
+}[] = [
+  { value: 'guessing', key: 'G', labelKey: 'confidenceGuessing' },
+  { value: 'unsure', key: 'U', labelKey: 'confidenceUnsure' },
+  { value: 'confident', key: 'C', labelKey: 'confidenceConfident' },
 ];
+
+/**
+ * Render a template whose single `{placeholder}` is markup rather than text — the
+ * emphasised misconception label, the key cap in the advance hint. Splitting on the
+ * placeholder keeps the words either side of the hole translatable while the hole
+ * itself stays a React node.
+ */
+function withNode(template: string, name: string, node: React.ReactNode) {
+  const [before, ...rest] = template.split(`{${name}}`);
+  return (
+    <>
+      {before}
+      {node}
+      {rest.join(`{${name}}`)}
+    </>
+  );
+}
 
 export interface OptionView {
   id: number;
@@ -88,6 +111,7 @@ export function ItemCard(props: ItemCardProps) {
     selectedOptionId, freeText, confidence, submitting, feedback,
   } = props;
 
+  const t = useDict();
   const state: SubmitState = {
     kind, phase, selectedOptionId, freeText, confidence, submitting,
   };
@@ -99,7 +123,7 @@ export function ItemCard(props: ItemCardProps) {
     <article className="slab" data-testid="item-card">
       <div className="slab-head">
         <span className="eyebrow">
-          Question {position} of {total}
+          {fill(t.session.questionCounter, { position, total })}
         </span>
         <span
           style={{ width: 3, height: 3, background: 'var(--muted)', borderRadius: '50%' }}
@@ -159,7 +183,11 @@ export function ItemCard(props: ItemCardProps) {
                 </span>
                 {answered && (
                   <span className="verdict">
-                    {fb?.isCorrect ? 'correct' : chosen ? 'your choice' : ''}
+                    {fb?.isCorrect
+                      ? t.session.verdictCorrect
+                      : chosen
+                        ? t.session.verdictYourChoice
+                        : ''}
                   </span>
                 )}
               </button>
@@ -169,7 +197,7 @@ export function ItemCard(props: ItemCardProps) {
       ) : (
         <div style={{ padding: '18px 30px 4px' }}>
           <label className="field-label" htmlFor="free-answer">
-            Your answer
+            {t.session.yourAnswerLabel}
           </label>
           <textarea
             id="free-answer"
@@ -178,7 +206,7 @@ export function ItemCard(props: ItemCardProps) {
             rows={10}
             value={freeText}
             disabled={answered || submitting}
-            placeholder="Write it out. You will be graded on what is literally here, not on what you meant."
+            placeholder={t.session.freeAnswerPlaceholder}
             onChange={(e) => props.onFreeText(e.target.value)}
           />
         </div>
@@ -187,8 +215,12 @@ export function ItemCard(props: ItemCardProps) {
       {/* Invariant 1: mandatory, and captured before submission. */}
       {!answered && (
         <div className="confidence">
-          <span className="eyebrow">Before you submit — how sure are you?</span>
-          <div className="confidence-options" role="group" aria-label="Confidence">
+          <span className="eyebrow">{t.session.confidencePrompt}</span>
+          <div
+            className="confidence-options"
+            role="group"
+            aria-label={t.session.confidenceGroupLabel}
+          >
             {CONFIDENCE_CHOICES.map((c) => (
               <button
                 key={c.value}
@@ -202,7 +234,7 @@ export function ItemCard(props: ItemCardProps) {
                 <span className="key" aria-hidden>
                   {c.key}
                 </span>
-                <span className="label">{c.label}</span>
+                <span className="label">{t.session[c.labelKey]}</span>
               </button>
             ))}
           </div>
@@ -218,9 +250,9 @@ export function ItemCard(props: ItemCardProps) {
             disabled={!ready}
             onClick={props.onSubmit}
           >
-            {submitting ? 'Submitting…' : 'Submit'}
+            {submitting ? t.session.submitting : t.session.submit}
           </button>
-          <span className="note">{submitting ? 'Recording…' : submitHint(state)}</span>
+          <span className="note">{submitting ? t.session.recording : submitHint(state)}</span>
         </div>
       )}
 
@@ -228,14 +260,19 @@ export function ItemCard(props: ItemCardProps) {
         <div className="feedback" data-correct={String(feedback.correct)} data-testid="feedback">
           <div className="row wrap gap-14" style={{ alignItems: 'baseline', marginBottom: 12 }}>
             <span className="feedback-head">
-              {feedback.correct ? 'Just so.' : 'Not this time.'}
+              {feedback.correct ? t.session.feedbackHeadCorrect : t.session.feedbackHeadWrong}
             </span>
             <span className="eyebrow">
               {feedback.kind === 'free'
-                ? `${feedback.criteria.filter((c) => c.met).length} of ${feedback.criteria.length} criteria met · ${Math.round(feedback.score * 100)}% (pass at ${Math.round(feedback.threshold * 100)}%)`
+                ? fill(t.session.criteriaMetSummary, {
+                    met: feedback.criteria.filter((c) => c.met).length,
+                    criteria: feedback.criteria.length,
+                    score: Math.round(feedback.score * 100),
+                    threshold: Math.round(feedback.threshold * 100),
+                  })
                 : feedback.correct
-                  ? 'the principle beneath it'
-                  : 'here is where it turns'}
+                  ? t.session.feedbackEyebrowCorrect
+                  : t.session.feedbackEyebrowWrong}
             </span>
           </div>
 
@@ -243,9 +280,11 @@ export function ItemCard(props: ItemCardProps) {
             <>
               {feedback.misconceptionLabel && (
                 <p className="serif-body" style={{ margin: '0 0 14px' }}>
-                  You chose the answer someone believing{' '}
-                  <em style={{ color: 'var(--terra)' }}>{feedback.misconceptionLabel}</em> would
-                  choose.
+                  {withNode(
+                    t.session.misconceptionAttribution,
+                    'misconception',
+                    <em style={{ color: 'var(--terra)' }}>{feedback.misconceptionLabel}</em>
+                  )}
                 </p>
               )}
               <p
@@ -262,10 +301,14 @@ export function ItemCard(props: ItemCardProps) {
 
           <div className="row wrap gap-14">
             <button type="button" className="btn primary" data-testid="next" onClick={props.onNext}>
-              Next question
+              {t.session.nextQuestion}
             </button>
             <span className="note">
-              or press <strong style={{ color: 'var(--muted-soft)' }}>Enter</strong>
+              {withNode(
+                t.session.orPressKey,
+                'key',
+                <strong style={{ color: 'var(--muted-soft)' }}>Enter</strong>
+              )}
             </span>
           </div>
         </div>
@@ -275,6 +318,7 @@ export function ItemCard(props: ItemCardProps) {
 }
 
 function FreeFeedbackBody({ feedback }: { feedback: FreeFeedbackView }) {
+  const t = useDict();
   return (
     <div className="stack gap-14" style={{ marginBottom: 22 }}>
       <p className="serif-body" style={{ margin: 0, maxWidth: '62ch' }}>
@@ -293,7 +337,7 @@ function FreeFeedbackBody({ feedback }: { feedback: FreeFeedbackView }) {
                 <span className="option-note correct">“{c.evidenceQuote}”</span>
               ) : (
                 <span className="option-note wrong">
-                  {c.comment || 'Nothing in the answer meets this.'}
+                  {c.comment || t.session.criterionUnmetFallback}
                 </span>
               )}
             </span>
@@ -301,7 +345,7 @@ function FreeFeedbackBody({ feedback }: { feedback: FreeFeedbackView }) {
               className="verdict"
               style={{ color: c.met ? 'var(--verd)' : 'var(--terra)', paddingTop: 2 }}
             >
-              {c.met ? 'met' : 'not met'}
+              {c.met ? t.session.criterionMet : t.session.criterionNotMet}
             </span>
           </div>
         ))}
@@ -309,7 +353,7 @@ function FreeFeedbackBody({ feedback }: { feedback: FreeFeedbackView }) {
 
       {feedback.missing.length > 0 && (
         <div>
-          <p className="section-label">What was absent</p>
+          <p className="section-label">{t.session.whatWasAbsent}</p>
           <ul className="serif-body" style={{ margin: 0, paddingLeft: 20 }}>
             {feedback.missing.map((m, i) => (
               <li key={i} style={{ marginBottom: 4 }}>
@@ -323,7 +367,7 @@ function FreeFeedbackBody({ feedback }: { feedback: FreeFeedbackView }) {
       {feedback.misconceptionsDetected.length > 0 && (
         <div>
           <p className="section-label" style={{ color: 'var(--terra)' }}>
-            Beliefs the answer positively reveals
+            {t.session.beliefsRevealed}
           </p>
           <ul className="serif-body" style={{ margin: 0, paddingLeft: 20 }}>
             {feedback.misconceptionsDetected.map((m, i) => (

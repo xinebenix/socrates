@@ -15,6 +15,10 @@ export default async function ConceptsPage() {
   const db = getDb();
   const at = now();
 
+  // The heading carries an emphasised span, so the template is split around its
+  // placeholder rather than filled — the two halves bracket the <em>.
+  const [headingBefore, headingAfter] = t.concepts.heading.split('{emphasis}');
+
   const concepts = listConcepts(db).map((c) => {
     const cells = loadCellSnapshots(db, c.id).filter((x) => x.applicable);
     return {
@@ -38,23 +42,21 @@ export default async function ConceptsPage() {
               style={{ width: 9, height: 9, background: 'var(--terra)', borderRadius: '50%' }}
               aria-hidden
             />
-            <span className="eyebrow">The examination begins with a subject</span>
+            <span className="eyebrow">{t.concepts.eyebrow}</span>
           </div>
 
           <h1 className="display">
-            What shall we <em className="accent">examine</em>?
+            {headingBefore}
+            <em className="accent">{t.concepts.headingEmphasis}</em>
+            {headingAfter}
           </h1>
-          <p className="lede">
-            Name a concept and paste what you are learning it from. I will not lecture you — I will
-            decompose the material, question you against the map, and keep coming back to the parts
-            you cannot yet hold.
-          </p>
+          <p className="lede">{t.concepts.lede}</p>
 
           <NewConceptForm />
 
           {concepts.length > 0 && (
             <div className="mt-34">
-              <p className="section-label">Under examination</p>
+              <p className="section-label">{t.concepts.listSectionLabel}</p>
               <ConceptList concepts={concepts} />
             </div>
           )}

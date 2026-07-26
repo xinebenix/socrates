@@ -2,6 +2,8 @@
 
 import { DEPTHS } from '@/lib/prompts/depth';
 import type { GridCell, GridRow } from '@/lib/stats';
+import { useDict } from '@/components/I18nProvider';
+import { fill, type Dict } from '@/lib/i18n/dict';
 
 /**
  * The mastery grid: nodes as rows, D1-D6 as columns, each cell a heatmap square
@@ -16,13 +18,21 @@ export function Heatmap({
   onCellClick?: (cell: GridCell, row: GridRow) => void;
   selectedCellId?: number | null;
 }) {
+  const t = useDict();
+
   return (
     <table className="heatmap">
       <thead>
         <tr>
-          <th className="node-col">Node</th>
+          <th className="node-col">{t.dashboard.nodeColumnHeader}</th>
           {DEPTHS.map((d) => (
-            <th key={d.level} title={`${d.name} — ${d.definition}`}>
+            <th
+              key={d.level}
+              title={fill(t.dashboard.depthColumnTitle, {
+                name: d.name,
+                definition: d.definition,
+              })}
+            >
               {d.short}
             </th>
           ))}
@@ -40,8 +50,8 @@ export function Heatmap({
                   type="button"
                   className="cell-swatch"
                   data-applicable={String(cell.applicable)}
-                  aria-label={label(row, cell)}
-                  title={label(row, cell)}
+                  aria-label={label(t, row, cell)}
+                  title={label(t, row, cell)}
                   style={{
                     background: swatch(cell),
                     outline:
@@ -65,12 +75,14 @@ export function Heatmap({
 }
 
 export function HeatmapLegend() {
+  const t = useDict();
+
   return (
     <div className="legend">
       <span className="swatch-row">
         <span className="swatch" style={{ background: 'var(--surface-raised)' }} />
         <span className="eyebrow" style={{ letterSpacing: '0.1em' }}>
-          never tested
+          {t.dashboard.legendNeverTested}
         </span>
       </span>
       {[0.25, 0.5, 0.75, 0.95].map((v) => (
@@ -102,13 +114,13 @@ export function HeatmapLegend() {
           />
         </span>
         <span className="eyebrow" style={{ letterSpacing: '0.1em' }}>
-          due
+          {t.dashboard.legendDue}
         </span>
       </span>
       <span className="swatch-row">
         <span className="swatch" style={{ borderStyle: 'dashed', background: 'transparent' }} />
         <span className="eyebrow" style={{ letterSpacing: '0.1em' }}>
-          not applicable
+          {t.dashboard.legendNotApplicable}
         </span>
       </span>
     </div>
@@ -129,14 +141,27 @@ function swatch(cell: GridCell): string {
   return `rgba(var(--verd-rgb), ${0.06 + v * 0.72})`;
 }
 
-function label(row: GridRow, cell: GridCell): string {
-  if (!cell.applicable) return `${row.title} · D${cell.depth} — marked not applicable`;
+function label(t: Dict, row: GridRow, cell: GridCell): string {
+  if (!cell.applicable) {
+    return fill(t.dashboard.cellLabelNotApplicable, { node: row.title, depth: cell.depth });
+  }
   if (cell.responseCount === 0) {
-    return `${row.title} · D${cell.depth} — never tested (prior ${Math.round(cell.pMastery * 100)}%)`;
+    return fill(t.dashboard.cellLabelNeverTested, {
+      node: row.title,
+      depth: cell.depth,
+      prior: Math.round(cell.pMastery * 100),
+    });
   }
   return (
-    `${row.title} · D${cell.depth} — effective ${Math.round(cell.effectiveMastery * 100)}% ` +
-    `(estimate ${Math.round(cell.pMastery * 100)}%, retrievability ${Math.round(cell.retrievability * 100)}%), ` +
-    `${cell.responseCount} response(s)${cell.mastered ? ', mastered' : ''}${cell.due ? ', due now' : ''}`
+    fill(t.dashboard.cellLabelTested, {
+      node: row.title,
+      depth: cell.depth,
+      effective: Math.round(cell.effectiveMastery * 100),
+      estimate: Math.round(cell.pMastery * 100),
+      retrievability: Math.round(cell.retrievability * 100),
+      count: cell.responseCount,
+    }) +
+    (cell.mastered ? t.dashboard.cellLabelMasteredSuffix : '') +
+    (cell.due ? t.dashboard.cellLabelDueSuffix : '')
   );
 }

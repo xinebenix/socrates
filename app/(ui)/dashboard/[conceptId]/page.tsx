@@ -6,6 +6,8 @@ import { conceptStats } from '@/lib/stats';
 import { blueprintAlarm } from '@/lib/analysis/itemStats';
 import { Heatmap, HeatmapLegend } from '@/components/Heatmap';
 import { Topbar } from '@/components/Chrome';
+import { getDict } from '@/lib/i18n/server';
+import { fill } from '@/lib/i18n/dict';
 import { StartButton } from '../../concepts/ConceptsClient';
 
 export const dynamic = 'force-dynamic';
@@ -23,10 +25,14 @@ export default async function DashboardPage({
   const concept = getConcept(db, conceptId);
   if (!concept) notFound();
 
+  const t = await getDict();
   const s = conceptStats(db, conceptId);
   const alarm = blueprintAlarm(db, conceptId);
   const maxForecast = Math.max(1, ...s.dueForecast.map((d) => d.count));
   const active = s.misconceptionProfile.filter((m) => m.active);
+  const [retentionNoteBefore, retentionNoteAfter] = t.dashboard.retentionNote.split('{link}');
+  const [benchmarkEmptyBefore, benchmarkEmptyAfter] =
+    t.dashboard.benchmarkHistoryEmpty.split('{link}');
 
   return (
     <div className="shell">
@@ -35,24 +41,25 @@ export default async function DashboardPage({
         <div className="column wide rise stack gap-22">
           <div>
             <p className="eyebrow" style={{ marginBottom: 14 }}>
-              Where you actually are
+              {t.dashboard.eyebrow}
             </p>
             <h1 className="display" style={{ marginBottom: 18 }}>
               {concept.name}
             </h1>
             <div className="row wrap gap-9">
-              <StartButton conceptId={conceptId} disabled={s.grid.length === 0} label="Train now" />
+              <StartButton
+                conceptId={conceptId}
+                disabled={s.grid.length === 0}
+                label={t.dashboard.trainNowButton}
+              />
               <Link className="btn small" href={`/blueprint/${conceptId}`}>
-                Edit the blueprint
+                {t.dashboard.editBlueprintLink}
               </Link>
             </div>
           </div>
 
           {!s.hasSource && (
-            <div className="warnbox">
-              No source material on this concept. Items test the canonical version of the topic and
-              will miss whatever is specific to what you are actually reading.
-            </div>
+            <div className="warnbox">{t.dashboard.noSourceWarning}</div>
           )}
           {alarm && <div className="warnbox">{alarm}</div>}
 
@@ -60,15 +67,21 @@ export default async function DashboardPage({
             className="grid-tiles"
             style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' }}
           >
-            <Tile label="Coverage" value={`${Math.round(s.coverage * 100)}%`} />
-            <Tile label="Mastered cells" value={`${s.masteredCells}/${s.applicableCells}`} />
-            <Tile label="Due now" value={String(s.dueCount)} />
-            <Tile label="Depth frontier" value={`D${s.frontier}`} />
-            <Tile label="Responses" value={String(s.totalResponses)} />
+            <Tile
+              label={t.dashboard.coverageTileLabel}
+              value={`${Math.round(s.coverage * 100)}%`}
+            />
+            <Tile
+              label={t.dashboard.masteredCellsTileLabel}
+              value={`${s.masteredCells}/${s.applicableCells}`}
+            />
+            <Tile label={t.dashboard.dueNowTileLabel} value={String(s.dueCount)} />
+            <Tile label={t.dashboard.depthFrontierTileLabel} value={`D${s.frontier}`} />
+            <Tile label={t.dashboard.responsesTileLabel} value={String(s.totalResponses)} />
           </div>
 
           <div className="panel">
-            <p className="section-label">Mastery grid — decayed, not raw</p>
+            <p className="section-label">{t.dashboard.masteryGridLabel}</p>
             <div style={{ overflowX: 'auto' }}>
               <Heatmap grid={s.grid} />
             </div>
@@ -78,11 +91,9 @@ export default async function DashboardPage({
           </div>
 
           <div className="panel">
-            <p className="section-label">
-              Misconception profile — ranked by recent selection
-            </p>
+            <p className="section-label">{t.dashboard.misconceptionProfileLabel}</p>
             {s.misconceptionProfile.length === 0 ? (
-              <p className="note">Nothing recorded yet.</p>
+              <p className="note">{t.dashboard.misconceptionProfileEmpty}</p>
             ) : (
               <>
                 {active.length > 0 && (
@@ -106,7 +117,10 @@ export default async function DashboardPage({
                         </span>
                       </span>
                       <span className="eyebrow tabular" style={{ flex: 'none' }}>
-                        {m.timesSelected}× total · {m.recentSelections} recent
+                        {fill(t.dashboard.misconceptionSelectionCount, {
+                          total: m.timesSelected,
+                          recent: m.recentSelections,
+                        })}
                       </span>
                     </div>
                   ))}
@@ -117,27 +131,31 @@ export default async function DashboardPage({
 
           <div className="row wrap gap-22" style={{ alignItems: 'stretch' }}>
             <div className="panel" style={{ flex: 1, minWidth: 320 }}>
-              <p className="section-label">Due forecast — next 14 days</p>
+              <p className="section-label">{t.dashboard.dueForecastLabel}</p>
               <div className="spark">
                 {s.dueForecast.map((d, i) => (
                   <span
                     key={d.date}
                     className={`bar ${i === 0 && d.count > 0 ? 'accent' : ''}`}
                     style={{ height: `${Math.max(2, (d.count / maxForecast) * 100)}%` }}
-                    title={`${d.date}: ${d.count} cell(s)`}
+                    title={fill(t.dashboard.dueForecastBarTitle, {
+                      date: d.date,
+                      count: d.count,
+                    })}
                   />
                 ))}
               </div>
               <p className="note" style={{ marginTop: 8 }}>
-                {s.dueForecast.reduce((a, b) => a + b.count, 0)} cells fall due in the next
-                fortnight. The leftmost bar includes everything already overdue.
+                {fill(t.dashboard.dueForecastNote, {
+                  count: s.dueForecast.reduce((a, b) => a + b.count, 0),
+                })}
               </p>
             </div>
 
             <div className="panel" style={{ flex: 1, minWidth: 320 }}>
-              <p className="section-label">Retention — mean mastery after each day&apos;s work</p>
+              <p className="section-label">{t.dashboard.retentionLabel}</p>
               {s.retention.length === 0 ? (
-                <p className="note">No responses yet.</p>
+                <p className="note">{t.dashboard.retentionEmpty}</p>
               ) : (
                 <>
                   <div className="spark">
@@ -146,14 +164,18 @@ export default async function DashboardPage({
                         key={p.date}
                         className="bar"
                         style={{ height: `${Math.max(2, p.meanEffectiveMastery * 100)}%` }}
-                        title={`${p.date}: ${Math.round(p.meanEffectiveMastery * 100)}% over ${p.responses} response(s)`}
+                        title={fill(t.dashboard.retentionBarTitle, {
+                          date: p.date,
+                          percent: Math.round(p.meanEffectiveMastery * 100),
+                          count: p.responses,
+                        })}
                       />
                     ))}
                   </div>
                   <p className="note" style={{ marginTop: 8 }}>
-                    Generated items drift in difficulty, so this line is not a measurement of
-                    progress. The{' '}
-                    <Link href={`/benchmark/${conceptId}`}>frozen benchmark</Link> is.
+                    {retentionNoteBefore}
+                    <Link href={`/benchmark/${conceptId}`}>{t.dashboard.retentionNoteLink}</Link>
+                    {retentionNoteAfter}
                   </p>
                 </>
               )}
@@ -161,12 +183,14 @@ export default async function DashboardPage({
           </div>
 
           <div className="panel">
-            <p className="section-label">Benchmark history</p>
+            <p className="section-label">{t.dashboard.benchmarkHistoryLabel}</p>
             {s.benchmarkHistory.length === 0 ? (
               <p className="note">
-                No benchmark runs yet. Practice on generated items; measure on frozen ones —{' '}
-                <Link href={`/items/${conceptId}`}>promote some validated items</Link> to the
-                benchmark set, then run it.
+                {benchmarkEmptyBefore}
+                <Link href={`/items/${conceptId}`}>
+                  {t.dashboard.benchmarkHistoryEmptyLink}
+                </Link>
+                {benchmarkEmptyAfter}
               </p>
             ) : (
               <div className="ledger">
