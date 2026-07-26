@@ -5,11 +5,13 @@ import { coverage } from '@/lib/policy/frontier';
 import { isDue } from '@/lib/schedule/decay';
 import { now } from '@/lib/clock';
 import { Topbar } from '@/components/Chrome';
+import { getDict } from '@/lib/i18n/server';
 import { ConceptList, NewConceptForm } from './ConceptsClient';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ConceptsPage() {
+  const t = await getDict();
   const db = getDb();
   const at = now();
 
@@ -28,7 +30,7 @@ export default async function ConceptsPage() {
 
   return (
     <div className="shell">
-      <Topbar subtitle="the endless knowledge gym" />
+      <Topbar subtitle={t.chrome.subtitleDefault} />
       <main className="page">
         <div className="column rise">
           <div className="row gap-14" style={{ marginBottom: 24 }}>
@@ -40,7 +42,7 @@ export default async function ConceptsPage() {
           </div>
 
           <h1 className="display">
-            What shall we <em style={{ fontStyle: 'italic', color: 'var(--terra)' }}>examine</em>?
+            What shall we <em className="accent">examine</em>?
           </h1>
           <p className="lede">
             Name a concept and paste what you are learning it from. I will not lecture you — I will

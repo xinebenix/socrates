@@ -1,4 +1,5 @@
 import { Topbar } from '@/components/Chrome';
+import { getDict } from '@/lib/i18n/server';
 import { LoginForm } from './LoginForm';
 
 export const dynamic = 'force-dynamic';
@@ -9,10 +10,11 @@ export default async function LoginPage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const { next } = await searchParams;
+  const t = await getDict();
 
   return (
     <div className="shell">
-      <Topbar subtitle="the endless knowledge gym" spend={false} />
+      <Topbar subtitle={t.chrome.subtitleDefault} spend={false} />
       <main className="page">
         <div className="column narrow rise" style={{ maxWidth: 520 }}>
           <div className="row gap-14" style={{ marginBottom: 24 }}>
@@ -24,7 +26,7 @@ export default async function LoginPage({
           </div>
 
           <h1 className="display" style={{ fontSize: 'clamp(30px,5vw,46px)' }}>
-            The gym is <em style={{ fontStyle: 'italic', color: 'var(--terra)' }}>locked</em>.
+            The gym is <em className="accent">locked</em>.
           </h1>
           <p className="lede">
             One password, shared. It stands between the open internet and both your learning

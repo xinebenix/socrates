@@ -851,3 +851,98 @@ table.mini tr:last-child td { border-bottom: none; }
 @media (max-width: 480px) {
   .spend-chip-limit { display: none; }
 }
+
+/* An emphasised word in a display heading. A class rather than an inline style so the
+   CJK rule below can actually win — inline styles beat any stylesheet, which left
+   "examine" sheared into a fake italic under Simplified Chinese. */
+em.accent {
+  font-style: italic;
+  color: var(--terra);
+}
+
+/* --------------------------------------------------------- CJK typography */
+
+/*
+ * Simplified Chinese needs three adjustments, all of them from the design comp.
+ *
+ * The font stacks put Noto *under* the Latin faces rather than replacing them, so a
+ * wordmark, a D1–D6 code or a numeral keeps EB Garamond / Cinzel / Jost while Han
+ * characters fall through to a face that has them. Per-character fallback is exactly
+ * what a font stack is for.
+ */
+:root[data-locale='zh'] {
+  --serif: 'EB Garamond', 'Noto Serif SC', Georgia, 'Times New Roman', serif;
+  --display: 'Cinzel', 'Noto Serif SC', Georgia, serif;
+  --sans: 'Jost', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/*
+ * No italics. Han has no italic form, so a browser synthesises one by shearing the
+ * glyphs, which looks like a rendering fault. The comp carries the same emphasis with
+ * terracotta instead — which is already how the English display heading marks its
+ * emphasised word, so nothing is lost.
+ */
+:root[data-locale='zh'] em,
+:root[data-locale='zh'] i,
+:root[data-locale='zh'] em.accent,
+:root[data-locale='zh'] .lede em,
+:root[data-locale='zh'] h1.display em {
+  font-style: normal;
+  color: var(--terra);
+}
+
+/*
+ * Looser leading. Han glyphs fill their em box where Latin lowercase does not, so the
+ * same line-height reads noticeably tighter. The comp sets body copy to 1.85.
+ */
+:root[data-locale='zh'] .lede,
+:root[data-locale='zh'] .serif-body,
+:root[data-locale='zh'] .callout p,
+:root[data-locale='zh'] .warnbox,
+:root[data-locale='zh'] table.mini td {
+  line-height: 1.85;
+}
+
+/* Letterspacing tuned for Latin caps hurts Han, which is already monospaced-ish. */
+:root[data-locale='zh'] .eyebrow,
+:root[data-locale='zh'] .eyebrow-accent,
+:root[data-locale='zh'] .section-label,
+:root[data-locale='zh'] .field-label,
+:root[data-locale='zh'] table.mini th {
+  letter-spacing: 0.08em;
+}
+
+/* The display heading does not need the tight Latin tracking either. */
+:root[data-locale='zh'] h1.display {
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+/* ------------------------------------------------------------ locale toggle */
+
+.locale {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.locale-opt {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 5px 9px;
+  font: 400 11px/1 var(--sans);
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.locale-opt:hover:not(:disabled) { color: var(--ink); }
+.locale-opt.on {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.locale-opt:disabled { cursor: default; opacity: 0.6; }
+.locale-opt + .locale-opt { border-left: 1px solid var(--rule-soft); }
