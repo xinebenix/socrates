@@ -15,14 +15,19 @@ import { setTransport } from '../lib/llm/client';
 import {
   bufferConcurrency,
   bufferTarget,
+  cellsGenerating,
   fillSessionNeed,
   planNeed,
   refillThreshold,
   topUpBuffer,
 } from '../lib/pipeline/buffer';
+import { nextItem, startSession } from '../lib/pipeline/session';
 import { generateItemsForCell, summarizeFailure } from '../lib/pipeline/generateItem';
 import { MAX_ITEMS_PER_CALL } from '../lib/prompts/itemMc';
-import { listCells } from '../lib/db/queries';
+import { countReadyItems, listCells, listSessionPlan } from '../lib/db/queries';
+import { assembleSession, clampSessionLength } from '../lib/policy/assemble';
+import { loadCellSnapshots } from '../lib/policy/snapshot';
+import { now } from '../lib/clock';
 
 afterEach(() => {
   setTransport(null);
@@ -128,6 +133,35 @@ describe('serving a session never builds depth', () => {
     expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(2);
   });
 
+  it('warms a whole default-length plan, leaving no slot uncovered', async () => {
+    // A fixed cap here used to leave 6-8 slots of a 20-item plan unwarmed, so the
+    // session hit inline generation partway through — the same visible symptom as
+    // the churn it was meant to fix, just later in the session.
+    for (const nodeCount of [3, 8, 12]) {
+      const { db, conceptId } = makeFixture(nodeCount);
+      const { handler } = makeFakeLlm();
+      setTransport(handler);
+
+      const { slots } = assembleSession({
+        cells: loadCellSnapshots(db, conceptId),
+        remediationNodeIds: new Set(),
+        targetLength: clampSessionLength(20),
+        now: now(),
+        includeSpacing: true,
+      });
+      const plan = slots.map((s) => s.cellId);
+      expect(plan.length).toBe(20);
+
+      await fillSessionNeed(db, conceptId, plan);
+
+      let uncovered = 0;
+      for (const [cellId, n] of planNeed(plan)) {
+        uncovered += Math.max(0, n - countReadyItems(db, cellId));
+      }
+      expect(uncovered, `${nodeCount} nodes left ${uncovered} slots uncovered`).toBe(0);
+    }
+  });
+
   it('generates NOTHING when the remaining plan is already covered', async () => {
     // This is the regression the user reported: answering question 1 kicked off a
     // fresh generation. It happened because the warm pass filled each cell to 1
@@ -178,6 +212,44 @@ describe('serving a session never builds depth', () => {
     }
 
     expect(handle.calls.filter((c) => c.kind === 'item-free').length).toBe(first);
+  });
+
+  it('does not double-buy when the warm is still running as the first item is served', async () => {
+    // warmSessionPlan is fire-and-forget, so the first served item routinely raced it.
+    // Both passes saw the same cells as short and both generated them: a 10-slot plan
+    // bought 20 items. cellsInFlight only covers batches, which are persisted;
+    // synchronous fills needed their own in-process reservation.
+    const { db, conceptId } = makeFixture(6);
+    const { handle, handler } = makeFakeLlm();
+
+    // Latency is what opens the window; instant replies hide the race entirely.
+    setTransport(async (req) => {
+      await new Promise((r) => setTimeout(r, 40));
+      return handler(req);
+    });
+
+    const started = startSession(db, conceptId, { length: 10 });
+    const plan = listSessionPlan(db, started.sessionId);
+    expect(plan.length).toBe(10);
+
+    // Ask for the first item while the warm is mid-flight, then let everything settle.
+    await nextItem(db, started.sessionId);
+    for (let quiet = 0; quiet < 12; quiet++) {
+      const before = handle.calls.length;
+      await new Promise((r) => setTimeout(r, 120));
+      if (handle.calls.length === before) break;
+    }
+
+    const persisted = (
+      db.prepare(`SELECT COUNT(*) AS n FROM items WHERE validated = 1`).get() as { n: number }
+    ).n;
+
+    // Ten slots need ten items. One extra is allowed: the inline path serves a waiting
+    // user and must not block on someone else's in-flight generation, and that item is
+    // banked rather than wasted. Twice the plan is the failure being guarded against.
+    expect(persisted).toBeGreaterThanOrEqual(10);
+    expect(persisted).toBeLessThanOrEqual(plan.length + 1);
+    expect(cellsGenerating().size).toBe(0);
   });
 
   it('skips a cell whose items are already being written in a batch', async () => {

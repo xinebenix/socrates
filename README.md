@@ -47,7 +47,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 167 tests, no network
+npm test          # 178 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -291,7 +291,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 167 tests, no network, ~2s
+npm test                 # 178 tests, no network, ~2s
 npm run test:grader      # the grader regression set against the live model
 ```
 

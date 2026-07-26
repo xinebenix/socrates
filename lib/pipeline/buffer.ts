@@ -98,6 +98,33 @@ export function lookaheadCells(): number {
   return 12;
 }
 
+/**
+ * Cells with a synchronous generation in flight in this process.
+ *
+ * cellsInFlight() covers batches, which are persisted and therefore visible across
+ * restarts. Synchronous fills are not persisted anywhere, so two overlapping passes
+ * both saw a cell as short and both generated it — the session-start warm is
+ * fire-and-forget, so the first served item routinely raced it and doubled the bill.
+ * A 10-slot plan bought 20 items.
+ *
+ * A module-level set is the right scope: the volume pins the deployment to one
+ * replica with the worker in-process, so every writer is this process.
+ */
+const generating = new Set<number>();
+
+/** Reserved before any await, so a concurrent pass cannot pick the same cell. */
+function reserve(cellIds: number[]): void {
+  for (const id of cellIds) generating.add(id);
+}
+
+function release(cellId: number): void {
+  generating.delete(cellId);
+}
+
+export function cellsGenerating(): ReadonlySet<number> {
+  return generating;
+}
+
 export interface TopUpReport {
   generated: number;
   failed: number;
@@ -128,6 +155,10 @@ export function computeShortfalls(
   for (const cellId of orderedCellIds) {
     if (budgeted >= opts.maxGenerations) break;
     if (opts.exclude?.has(cellId)) continue;
+    if (generating.has(cellId)) {
+      skipped++;
+      continue;
+    }
     const have = countReadyItems(db, cellId);
 
     // Hysteresis: a partly-drained cell is left alone until it reaches the low-water
@@ -222,6 +253,8 @@ export async function topUpBuffer(
   });
   report.skipped += skipped;
 
+  reserve(short.map((x) => x.cellId));
+
   await pooled(
     short.map(({ cellId, want }) => async () => {
       try {
@@ -230,6 +263,8 @@ export async function topUpBuffer(
         if (outcome.items.length < want) report.failed += want - outcome.items.length;
       } catch {
         report.failed += want;
+      } finally {
+        release(cellId);
       }
     }),
     opts.concurrency ?? bufferConcurrency()
@@ -282,16 +317,24 @@ export async function fillSessionNeed(
 ): Promise<TopUpReport> {
   const report: TopUpReport = { generated: 0, failed: 0, skipped: 0 };
   const inFlight = cellsInFlight(db);
-  const maxGenerations = opts.maxGenerations ?? 12;
+  const need = planNeed(cellIds);
+
+  // Default to covering the whole request. A fixed cap of 12 here silently left 6-8
+  // slots of a 20-item plan uncovered, which is the worst of both worlds: the warm
+  // still costs a round of calls, and the session hits inline generation partway
+  // through anyway. The plan is already bounded — sessions are 10-40 items — so the
+  // total need is the honest ceiling.
+  const maxGenerations =
+    opts.maxGenerations ?? [...need.values()].reduce((a, b) => a + b, 0);
 
   const short: { cellId: number; want: number }[] = [];
   let budgeted = 0;
 
-  for (const [cellId, needed] of planNeed(cellIds)) {
+  for (const [cellId, needed] of need) {
     if (budgeted >= maxGenerations) break;
-    // A cell already being generated in a batch must not be generated again here:
-    // that is the same items bought twice.
-    if (inFlight.has(cellId)) {
+    // A cell already being generated — in a batch, or by an overlapping synchronous
+    // pass — must not be generated again here: that is the same items bought twice.
+    if (inFlight.has(cellId) || generating.has(cellId)) {
       report.skipped++;
       continue;
     }
@@ -312,6 +355,10 @@ export async function fillSessionNeed(
     items: budgeted,
   });
 
+  // Reserved synchronously, before the first await, so the fire-and-forget warm and
+  // the first served item cannot both claim the same cells.
+  reserve(short.map((x) => x.cellId));
+
   await pooled(
     short.map(({ cellId, want }) => async () => {
       try {
@@ -320,6 +367,8 @@ export async function fillSessionNeed(
         if (outcome.items.length < want) report.failed += want - outcome.items.length;
       } catch {
         report.failed += want;
+      } finally {
+        release(cellId);
       }
     }),
     opts.concurrency ?? bufferConcurrency()
