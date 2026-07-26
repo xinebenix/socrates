@@ -286,7 +286,7 @@ not the dial.
 | `GYM_EFFORT_VALIDATE` | `high` | **leave it.** A weaker validator rejects sound items, and each rejection costs two more calls — lowering this can make generation slower as well as worse |
 | `GYM_EFFORT_GRADE` | `high` | leave it. Invariant 9: charitable grading turns a failed retrieval into a passed one |
 | `GYM_BUFFER_TARGET` | `3` | items per cell **and per generation call**, max 10. Raising it lowers cost *per item* — the shared reasoning divides further — at the price of committing money earlier and a slower first fill |
-| `GYM_BUFFER_REFILL_AT` | 40% of target | remaining items at which a cell refills, all the way to the target in one call. `0` refills only when a cell runs dry: maximum amortization, no slack |
+| `GYM_BUFFER_REFILL_AT` | ~40% of target, never above `target − 2` | remaining items at which a cell refills, all the way to the target in one call. `0` refills only when a cell runs dry: maximum amortization, no slack |
 | `GYM_WORKER_INTERVAL_MS` | `60000` | how often the background fill runs |
 
 If you want one change: raise `GYM_BUFFER_CONCURRENCY` to `8`. It costs no quality at
@@ -437,8 +437,11 @@ question with the plan already covered generates nothing at all. `/api/health` r
 is not going through the Batch API whatever the config says.
 
 **The buffer has hysteresis, and it has to.** A cell is not refilled the moment it
-drops below target — it drains to a low-water mark (40% of the target by default),
-then refills to full in one call. Without that, "short" meant `have < target`, so
+drops below target — it drains to a low-water mark (about 40% of the target), then
+refills to full in one call. The mark is additionally held far enough below the target
+that a refill always asks for at least two items: without that, a target of 3 put the
+mark at one-below-target, which is the same condition as "below target" and made the
+feature do nothing at all. Without that, "short" meant `have < target`, so
 serving one item from a ten-deep cell triggered a call for exactly *one* item: the
 reasoning about the cell paid in full and amortized across nothing. Sets made the
 first fill cheap and left every refill afterwards at the old price. Deeper buffer,

@@ -211,11 +211,19 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
     // — which is the point. Building depth toward GYM_BUFFER_TARGET is the worker's
     // job, done in batches at half price, not something an answered question triggers.
     // The repeats in `plan` are meaningful: a cell serving two slots needs two items.
+    //
+    // Slots with an item already pinned are excluded. A benchmark plan pins every one
+    // of its slots to a frozen item at plan time, and frozen items are not counted as
+    // ready (invariant 10 keeps them out of practice) — so without this filter every
+    // benchmark run generated a fresh practice item for every remaining slot, none of
+    // which that run would ever serve.
     if (node) {
       topUpInBackground(
         db,
         node.concept_id,
-        plan.filter((p) => p.position > slot.position).map((p) => p.cell_id)
+        plan
+          .filter((p) => p.position > slot.position && p.item_id == null)
+          .map((p) => p.cell_id)
       );
     }
 

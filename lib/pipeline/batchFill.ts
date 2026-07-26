@@ -36,6 +36,7 @@ import {
   persistMcItem,
 } from './generateItem';
 import { recentStems } from '../db/queries';
+import { holdCells } from './cellLock';
 import { tooSimilar } from '../analysis/similarity';
 import { recordUsage } from '../cost';
 import { logEvent } from '../ops';
@@ -121,13 +122,21 @@ export async function submitGenerationBatch(
 
   if (requests.length === 0) return 0;
 
-  const providerId = await getBatchTransport().submit(requests);
-  db.prepare(
-    `INSERT INTO gen_batches (provider_batch_id, phase, payload, created_at) VALUES (?, 'generate', ?, ?)`
-  ).run(providerId, JSON.stringify({ cells }), iso(now()));
+  // The gen_batches row — the only thing cellsInFlight() can see — cannot be written
+  // until the provider returns an id. Hold the cells in the in-process registry across
+  // that round trip so a synchronous fill cannot claim them in the gap.
+  const held = holdCells(cells.map((c) => c.cellId));
+  try {
+    const providerId = await getBatchTransport().submit(requests);
+    db.prepare(
+      `INSERT INTO gen_batches (provider_batch_id, phase, payload, created_at) VALUES (?, 'generate', ?, ?)`
+    ).run(providerId, JSON.stringify({ cells }), iso(now()));
 
-  logEvent(db, 'info', 'batch.submitted', { phase: 'generate', requests: requests.length });
-  return requests.length;
+    logEvent(db, 'info', 'batch.submitted', { phase: 'generate', requests: requests.length });
+    return requests.length;
+  } finally {
+    held();
+  }
 }
 
 export interface BatchProgress {
@@ -143,6 +152,12 @@ export interface BatchProgress {
 export async function processBatches(db: Db): Promise<BatchProgress> {
   const progress: BatchProgress = { itemsPersisted: 0, validationsSubmitted: 0, failed: 0 };
 
+  // Expiry is swept first and unconditionally, before any network call can fail and
+  // skip it. An open gen_batches row is not inert: cellsInFlight() is built from it,
+  // so a row that never completes excludes its cells from generation *forever* — the
+  // buffer for them silently stops filling, and nothing says so.
+  sweepExpired(db);
+
   for (const row of openBatches(db)) {
     let results;
     try {
@@ -155,24 +170,50 @@ export async function processBatches(db: Db): Promise<BatchProgress> {
       continue;
     }
 
-    if (results === null) {
-      // Still processing. Write off anything past the provider's own expiry.
-      if (now().getTime() - Date.parse(row.created_at) > ABANDON_AFTER_MS) {
-        complete(db, row.id);
-        logEvent(db, 'warn', 'batch.abandoned', { batch: row.provider_batch_id });
-      }
-      continue;
-    }
+    if (results === null) continue; // still processing; expiry handled by the sweep
 
-    if (row.phase === 'generate') {
-      progress.validationsSubmitted += await handleGenerateResults(db, row, results, progress);
-    } else {
-      handleValidateResults(db, row, results, progress);
+    try {
+      if (row.phase === 'generate') {
+        progress.validationsSubmitted += await handleGenerateResults(db, row, results, progress);
+      } else {
+        handleValidateResults(db, row, results, progress);
+      }
+    } catch (err) {
+      // A throw here — most likely submitting the follow-on validation batch — used to
+      // propagate out and leave this row open for good. The results are lost either
+      // way; closing the row is what lets the next tick see the shortfall and retry.
+      logEvent(db, 'error', 'batch.handle_failed', {
+        batch: row.provider_batch_id,
+        phase: row.phase,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      complete(db, row.id);
     }
-    complete(db, row.id);
   }
 
   return progress;
+}
+
+/**
+ * Close out batches the provider will never answer.
+ *
+ * Runs on every tick regardless of what else succeeds or fails, because the cost of
+ * missing it is unbounded: the row's cells stay excluded from generation until someone
+ * edits the database.
+ */
+function sweepExpired(db: Db): void {
+  const cutoff = now().getTime() - ABANDON_AFTER_MS;
+  for (const row of openBatches(db)) {
+    if (Date.parse(row.created_at) < cutoff) {
+      complete(db, row.id);
+      logEvent(db, 'warn', 'batch.abandoned', {
+        batch: row.provider_batch_id,
+        phase: row.phase,
+        ageHours: Math.round((now().getTime() - Date.parse(row.created_at)) / 3_600_000),
+      });
+    }
+  }
 }
 
 async function handleGenerateResults(
@@ -275,6 +316,8 @@ function handleValidateResults(
 ): void {
   const payload = JSON.parse(row.payload) as { items: ValPayloadItem[] };
   const byId = new Map(payload.items.map((i) => [i.customId, i]));
+  const persistedBefore = progress.itemsPersisted;
+  const failedBefore = progress.failed;
 
   for (const entry of results) {
     const item = byId.get(entry.customId);
@@ -326,10 +369,13 @@ function handleValidateResults(
     progress.itemsPersisted++;
   }
 
+  // This batch's own numbers. Logging the shared running total made every batch in a
+  // tick look progressively larger than it was.
   logEvent(db, 'info', 'batch.completed', {
     phase: 'validate',
-    persisted: progress.itemsPersisted,
-    failed: progress.failed,
+    batch: row.provider_batch_id,
+    persisted: progress.itemsPersisted - persistedBefore,
+    failed: progress.failed - failedBefore,
   });
 }
 

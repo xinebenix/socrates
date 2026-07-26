@@ -23,6 +23,10 @@ import { MAX_ITEMS_PER_CALL } from '../prompts/itemMc';
 import { generateItemsForCell } from './generateItem';
 import { cellsInFlight } from './batchFill';
 import { logEvent } from '../ops';
+import { isGenerating, release, reserve } from './cellLock';
+
+// Re-exported so callers keep a single import surface for buffer behaviour.
+export { cellsGenerating, generationInFlight } from './cellLock';
 
 /**
  * Validated, unserved items kept ready per plausibly-due cell — and, because a cell's
@@ -75,10 +79,23 @@ export function bufferConcurrency(): number {
  */
 export function refillThreshold(target = bufferTarget()): number {
   const raw = Number(process.env.GYM_BUFFER_REFILL_AT);
-  const chosen =
-    Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : Math.max(1, Math.ceil(target * 0.4));
-  // Never at or above the target: a cell holding its full target is not short.
-  return Math.min(chosen, Math.max(0, target - 1));
+  if (Number.isFinite(raw) && raw >= 0) {
+    // An explicit value is taken at face value, only clamped below the target: a cell
+    // holding its full target is not short.
+    return Math.min(Math.floor(raw), Math.max(0, target - 1));
+  }
+
+  // 40% of the target, but never so high that a refill would ask for fewer than two
+  // items. Without that second bound the feature did nothing at the shipped default:
+  // at a target of 3, ceil(3 * 0.4) is 2, which is target - 1, so "drained to the mark"
+  // and "one below target" were the same condition and every served item triggered a
+  // one-item refill — the exact shape the hysteresis exists to prevent.
+  //
+  // The slack this gives up at small targets is affordable now that fillSessionNeed
+  // covers a session's own plan synchronously: a thin buffer no longer means a wait
+  // mid-session, only that the worker has depth left to build.
+  const proportional = Math.max(1, Math.ceil(target * 0.4));
+  return Math.max(0, Math.min(proportional, target - 2));
 }
 
 /**
@@ -96,56 +113,6 @@ export function lookaheadCells(): number {
   const raw = Number(process.env.GYM_LOOKAHEAD_CELLS);
   if (Number.isFinite(raw) && raw > 0) return Math.min(Math.floor(raw), 60);
   return 12;
-}
-
-/**
- * Cells with a synchronous generation in flight in this process.
- *
- * cellsInFlight() covers batches, which are persisted and therefore visible across
- * restarts. Synchronous fills are not persisted anywhere, so two overlapping passes
- * both saw a cell as short and both generated it — the session-start warm is
- * fire-and-forget, so the first served item routinely raced it and doubled the bill.
- * A 10-slot plan bought 20 items.
- *
- * A module-level set is the right scope: the volume pins the deployment to one
- * replica with the worker in-process, so every writer is this process.
- */
-const generating = new Map<number, { promise: Promise<void>; done: () => void }>();
-
-/** Reserved before any await, so a concurrent pass cannot pick the same cell. */
-function reserve(cellIds: number[]): void {
-  for (const id of cellIds) {
-    if (generating.has(id)) continue;
-    let done!: () => void;
-    const promise = new Promise<void>((resolve) => {
-      done = resolve;
-    });
-    generating.set(id, { promise, done });
-  }
-}
-
-function release(cellId: number): void {
-  const entry = generating.get(cellId);
-  if (!entry) return;
-  generating.delete(cellId);
-  entry.done();
-}
-
-export function cellsGenerating(): ReadonlySet<number> {
-  return new Set(generating.keys());
-}
-
-/**
- * Resolves when the generation already running for this cell finishes, or null if
- * none is.
- *
- * The session runner uses this instead of starting its own generation for a cell
- * someone is already writing. Both paths took the same time — the difference was
- * that one of them bought a second copy of the same items. This is the fix for the
- * second question of a cold session waiting on a duplicate of work already in flight.
- */
-export function generationInFlight(cellId: number): Promise<void> | null {
-  return generating.get(cellId)?.promise ?? null;
 }
 
 export interface TopUpReport {
@@ -178,7 +145,7 @@ export function computeShortfalls(
   for (const cellId of orderedCellIds) {
     if (budgeted >= opts.maxGenerations) break;
     if (opts.exclude?.has(cellId)) continue;
-    if (generating.has(cellId)) {
+    if (isGenerating(cellId)) {
       skipped++;
       continue;
     }
@@ -357,7 +324,7 @@ export async function fillSessionNeed(
     if (budgeted >= maxGenerations) break;
     // A cell already being generated — in a batch, or by an overlapping synchronous
     // pass — must not be generated again here: that is the same items bought twice.
-    if (inFlight.has(cellId) || generating.has(cellId)) {
+    if (inFlight.has(cellId) || isGenerating(cellId)) {
       report.skipped++;
       continue;
     }

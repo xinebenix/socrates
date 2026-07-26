@@ -22,6 +22,7 @@ import {
   topUpBuffer,
 } from '../lib/pipeline/buffer';
 import { nextItem, startSession } from '../lib/pipeline/session';
+import { startBenchmarkRun } from '../lib/pipeline/benchmark';
 import { generateItemsForCell, summarizeFailure } from '../lib/pipeline/generateItem';
 import { MAX_ITEMS_PER_CALL } from '../lib/prompts/itemMc';
 import { countReadyItems, listCells, listSessionPlan } from '../lib/db/queries';
@@ -252,6 +253,51 @@ describe('serving a session never builds depth', () => {
     expect(cellsGenerating().size).toBe(0);
   });
 
+  it('generates nothing at all during a benchmark run', async () => {
+    // A benchmark plan pins every slot to a frozen, human-vetted item, and frozen
+    // items are deliberately not counted as ready (invariant 10). The buffer therefore
+    // read every benchmark slot as empty and generated a practice item for it — items
+    // that run would never serve. Pure waste, on every benchmark.
+    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cells = listCells(db, conceptId).filter((c) => c.depth <= 5);
+    // Three frozen, vetted items — the benchmark set.
+    for (const cell of cells.slice(0, 3)) {
+      const info = db
+        .prepare(
+          `INSERT INTO items (cell_id, kind, stem, explanation, generated_at, validated, frozen)
+           VALUES (?, 'mc', ?, '', '2026-01-01T00:00:00.000Z', 1, 1)`
+        )
+        .run(cell.id, `frozen stem for cell ${cell.id}`);
+      const itemId = Number(info.lastInsertRowid);
+      for (let p = 1; p <= 4; p++) {
+        db.prepare(
+          `INSERT INTO options (item_id, position, text, is_correct, misconception_id, rationale)
+           VALUES (?, ?, ?, ?, NULL, '')`
+        ).run(itemId, p, `option ${p}`, p === 1 ? 1 : 0);
+      }
+    }
+
+    const run = startBenchmarkRun(db, conceptId);
+    expect(run.itemCount).toBe(3);
+    const before = handle.calls.length;
+
+    // Serve the whole benchmark.
+    for (let i = 0; i < run.itemCount; i++) {
+      const res = await nextItem(db, run.sessionId);
+      expect(res.item, `benchmark slot ${i + 1} should serve a frozen item`).not.toBeNull();
+    }
+    for (let quiet = 0; quiet < 8; quiet++) {
+      const n = handle.calls.length;
+      await new Promise((r) => setTimeout(r, 60));
+      if (handle.calls.length === n) break;
+    }
+
+    expect(handle.calls.length - before).toBe(0);
+  });
+
   it('skips a cell whose items are already being written in a batch', async () => {
     const { db, conceptId, nodeIds } = makeFixture(2);
     const { handle, handler } = makeFakeLlm();
@@ -281,13 +327,69 @@ describe('serving a session never builds depth', () => {
 });
 
 describe('the low-water mark', () => {
-  it('defaults to 40% of the target, and never reaches it', () => {
-    // A cell of 10 refills once 6 have been used.
+  it('always leaves a refill worth batching, at every target', () => {
+    // A cell of 10 refills once 6 have been used, asking for 6 in one call.
     expect(refillThreshold(10)).toBe(4);
     expect(refillThreshold(8)).toBe(4);
-    expect(refillThreshold(3)).toBe(2);
+    expect(refillThreshold(6)).toBe(3);
+
+    // The rule that matters, and the one the first version got wrong: a refill must
+    // never ask for fewer than two items. At a target of 3, plain 40% gives 2 — which
+    // is target-1, so "at the mark" and "one below target" collapse into the same
+    // condition and the hysteresis does nothing at all.
+    expect(refillThreshold(3)).toBe(1);
+    expect(refillThreshold(2)).toBe(0);
     // A target of 1 can hold no slack: refill only when empty.
     expect(refillThreshold(1)).toBe(0);
+
+    for (const target of [1, 2, 3, 4, 5, 6, 8, 10]) {
+      const asksFor = target - refillThreshold(target);
+      expect(asksFor, `target ${target} would refill ${asksFor} at a time`).toBeGreaterThanOrEqual(
+        Math.min(2, target)
+      );
+    }
+  });
+
+  it('does nothing on a cell still above the mark, at the shipped default target', async () => {
+    // The regression the old test missed by only ever exercising target 10.
+    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+    const gens = () => handle.calls.filter((c) => c.kind === 'item-mc').length;
+    const fill = () =>
+      topUpBuffer(db, conceptId, { priorityCellIds: [cell.id], concurrency: 1 });
+
+    await fill();
+    expect(gens()).toBe(1);
+
+    // Serve one of three. Two remain, above the mark of 1 — no refill.
+    db.prepare(
+      `UPDATE items SET served_count = 1 WHERE id = (
+         SELECT id FROM items WHERE cell_id = ? AND served_count = 0 LIMIT 1)`
+    ).run(cell.id);
+    await fill();
+    expect(gens()).toBe(1);
+
+    // Serve a second. One remains, at the mark — one refill, asking for two.
+    db.prepare(
+      `UPDATE items SET served_count = 1 WHERE id = (
+         SELECT id FROM items WHERE cell_id = ? AND served_count = 0 LIMIT 1)`
+    ).run(cell.id);
+    await fill();
+    expect(gens()).toBe(2);
+
+    const asked = /<how_many>(\d+)<\/how_many>/.exec(
+      String(
+        (handle.calls.filter((c) => c.kind === 'item-mc')[1].request.messages as {
+          content: string;
+        }[])[0].content
+      )
+    )?.[1];
+    expect(asked).toBe('2');
   });
 
   it('takes an absolute override, clamped below the target', () => {
@@ -571,11 +673,12 @@ describe('topUpBuffer', () => {
     });
     const firstRound = handle.calls.filter((c) => c.kind === 'item-mc').length;
 
-    // Two are banked; asking for three should generate one, not three.
+    // Two are banked against a target of 4, whose mark is 2 — so the cell is at the
+    // mark and refills by exactly its shortfall, two, not the whole target.
     await topUpBuffer(db, conceptId, {
       priorityCellIds: [target.id],
-      target: 3,
-      maxGenerations: 1,
+      target: 4,
+      maxGenerations: 4,
       concurrency: 1,
     });
 
@@ -584,7 +687,7 @@ describe('topUpBuffer', () => {
       .slice(firstRound)
       .map((c) => /<how_many>(\d+)<\/how_many>/.exec(String((c.request.messages as { content: string }[])[0].content))?.[1]);
 
-    expect(asked).toEqual(['1']);
+    expect(asked).toEqual(['2']);
   });
 
   it('generates nothing when every cell already holds the target', async () => {

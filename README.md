@@ -47,7 +47,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 179 tests, no network
+npm test          # 181 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -180,8 +180,10 @@ the worker alone. Nothing on the answer path ever builds depth, so answering a q
 whose session is already covered generates nothing.
 
 **The buffer drains to a low-water mark before refilling.** A cell is not topped up
-the moment it drops below target — it drains to 40% of it, then refills to full in one
-call. Refilling by one after every served item would pay the cell's reasoning cost per
+the moment it drops below target — it drains to roughly 40% of it, then refills to full
+in one call, and never asks for fewer than two items at a time. That second rule is load
+bearing: at a target of 3, plain 40% rounds to one-below-target, which makes the mark
+identical to "below target" and the whole feature a no-op. Refilling by one after every served item would pay the cell's reasoning cost per
 item and undo the whole point of generating sets. Invariant 7 is what makes the gap
 safe: no two consecutive items share a node, so a cell drains at most every other item.
 
@@ -299,7 +301,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 179 tests, no network, ~8s
+npm test                 # 181 tests, no network, ~9s
 npm run test:grader      # the grader regression set against the live model
 ```
 
