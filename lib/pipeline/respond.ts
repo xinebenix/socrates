@@ -129,6 +129,141 @@ export function submitMcResponse(db: Db, input: McSubmission): McFeedback {
   };
 }
 
+export interface DontKnowSubmission {
+  sessionId: number;
+  itemId: number;
+  latencyMs: number | null;
+}
+
+export type DontKnowFeedback =
+  | {
+      kind: 'mc';
+      response: ResponseRow;
+      correct: false;
+      options: (OptionRow & { misconception_label: string | null })[];
+      explanation: string;
+      chosenOptionId: null;
+      misconceptionLabel: null;
+      pMasteryBefore: number;
+      pMasteryAfter: number;
+    }
+  | {
+      kind: 'free';
+      response: ResponseRow;
+      correct: false;
+      score: 0;
+      verdict: null;
+      rubric: RubricCriterion[];
+      pMasteryBefore: number;
+      pMasteryAfter: number;
+    };
+
+/**
+ * "I don't know" — the learner declines the item and asks to be shown the answer.
+ *
+ * This records a response before it reveals anything, and that ordering is the whole
+ * design. A reveal that recorded nothing would let the item be looked at and then
+ * answered, which is not an answer to a question; and the served slot would carry no
+ * response, which is the same silent hole in the record that invariant 2 exists to
+ * prevent. So the reveal costs what it is worth: the cell is marked wrong and
+ * rescheduled, exactly as a wrong answer would be.
+ *
+ * Confidence is set to `guessing` by the server rather than accepted from the client.
+ * Invariant 1 wants the learner's own estimate before they see the answer, and
+ * declining *is* that estimate stated at its floor — but it is not something a client
+ * should be able to report as anything else.
+ *
+ * A free-response decline is not sent to the grader. There is nothing to grade, and
+ * spending a model call to be told that an empty answer meets no criterion is spending
+ * for no signal.
+ */
+export function submitDontKnowResponse(db: Db, input: DontKnowSubmission): DontKnowFeedback {
+  const item = getItem(db, input.itemId);
+  if (!item) throw new Error(`item ${input.itemId} not found`);
+  const cell = getCell(db, item.cell_id);
+  if (!cell) throw new Error(`cell ${item.cell_id} not found`);
+
+  const isMc = item.kind === 'mc';
+  const options = isMc ? listOptions(db, item.id) : [];
+
+  const pBefore = cell.p_mastery;
+  const pAfter = bktUpdate({
+    pL: pBefore,
+    correct: false,
+    confidence: 'guessing',
+    numOptions: options.length,
+  });
+
+  const sched = scheduleUpdate(
+    {
+      intervalDays: cell.interval_days,
+      ease: cell.ease,
+      consecutiveCorrect: cell.consecutive_correct,
+    },
+    false,
+    now()
+  );
+
+  const tx = db.transaction(() => {
+    const response = insertResponse(db, {
+      session_id: input.sessionId,
+      item_id: item.id,
+      cell_id: cell.id,
+      // No option was chosen and no text was written: nothing to attribute a
+      // misconception to, so no selection counter moves either.
+      chosen_option_id: null,
+      free_text: null,
+      is_correct: 0,
+      score: isMc ? null : 0,
+      grader_json: null,
+      confidence: 'guessing',
+      latency_ms: input.latencyMs,
+      p_mastery_before: pBefore,
+      p_mastery_after: pAfter,
+    });
+
+    updateCellAfterResponse(db, cell.id, {
+      pMastery: pAfter,
+      intervalDays: sched.intervalDays,
+      ease: sched.ease,
+      consecutiveCorrect: sched.consecutiveCorrect,
+      lastTestedAt: iso(now()),
+      nextDueAt: sched.nextDueAt,
+    });
+
+    return response;
+  });
+
+  const response = tx();
+
+  if (isMc) {
+    return {
+      kind: 'mc',
+      response,
+      correct: false,
+      options: withLabels(db, options),
+      explanation: item.explanation,
+      chosenOptionId: null,
+      misconceptionLabel: null,
+      pMasteryBefore: pBefore,
+      pMasteryAfter: pAfter,
+    };
+  }
+
+  // For a free item the rubric *is* the answer: it is the list of things a passing
+  // answer has to contain, which is the closest thing to a model answer that exists.
+  return {
+    kind: 'free',
+    response,
+    correct: false,
+    score: 0,
+    verdict: null,
+    rubric: parseRubric(item),
+    pMasteryBefore: pBefore,
+    pMasteryAfter: pAfter,
+  };
+}
+
 export interface FreeFeedback {
   response: ResponseRow;
   correct: boolean;

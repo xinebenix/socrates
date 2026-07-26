@@ -1,4 +1,5 @@
 import type { Confidence } from '../mastery/bkt';
+import type { Dict } from '../i18n/dict';
 
 export interface SubmitState {
   kind: 'mc' | 'free';
@@ -24,15 +25,14 @@ export function canSubmit(s: SubmitState): boolean {
   return s.freeText.trim().length > 0;
 }
 
-export function submitHint(s: SubmitState): string {
-  if (s.kind === 'mc' && s.selectedOptionId === null) {
-    return 'Choose an option. Number keys work too.';
-  }
-  if (s.kind === 'free' && s.freeText.trim().length === 0) {
-    return 'Write your answer.';
-  }
-  if (s.confidence === null) {
-    return 'How sure are you? Answer that before you submit — it is half the signal.';
-  }
-  return 'Ready. Press Enter.';
+/**
+ * Which hint to show, as a dictionary key rather than a sentence — the hint sits in the
+ * answer surface, so returning English from here left one untranslated line under the
+ * submit button in the Chinese interface.
+ */
+export function submitHintKey(s: SubmitState): keyof Dict['session'] {
+  if (s.kind === 'mc' && s.selectedOptionId === null) return 'submitHintChooseOption';
+  if (s.kind === 'free' && s.freeText.trim().length === 0) return 'submitHintWriteAnswer';
+  if (s.confidence === null) return 'submitHintConfidence';
+  return 'submitHintReady';
 }

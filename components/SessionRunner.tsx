@@ -8,6 +8,16 @@ import { useDict } from '@/components/I18nProvider';
 import { fill } from '@/lib/i18n/dict';
 import { ItemCard, type FeedbackView, type OptionView } from './ItemCard';
 
+/**
+ * How long the learner sits with an item before it can be given up on.
+ *
+ * Ten seconds is not a time limit — nothing happens when it expires except that the
+ * "I don't know" control appears. The delay exists because the attempt to retrieve an
+ * answer is the part that teaches, and an escape hatch available on the first render
+ * would be taken before the attempt had been made.
+ */
+const COUNTDOWN_SECONDS = 10;
+
 const LOADING_LABEL_KEYS = [
   'loadingConsidering',
   'loadingFraming',
@@ -50,6 +60,21 @@ export function SessionRunner({
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackView | null>(null);
   const [progress, setProgress] = useState({ total: 0, served: 0, answered: 0 });
+  /**
+   * The countdown, carrying the item it belongs to.
+   *
+   * Pairing the two is what stops an expired countdown from leaking into the next
+   * question. A bare number would still read zero on the render that first shows the
+   * new item — the timer effect resets it only afterwards, and a passive effect is not
+   * guaranteed to run before the browser paints — so "I don't know" could flash up on a
+   * question nobody has looked at yet. An item the countdown does not belong to reads
+   * as a full ten seconds, which is the safe direction to be wrong in.
+   */
+  const [countdown, setCountdown] = useState<{ item: ServedItem; secondsLeft: number } | null>(
+    null
+  );
+  const secondsLeft =
+    countdown && countdown.item === item ? countdown.secondsLeft : COUNTDOWN_SECONDS;
 
   const shownAt = useRef<number>(Date.now());
 
@@ -115,6 +140,28 @@ export function SessionRunner({
     return () => clearInterval(timer);
   }, [loading]);
 
+  /**
+   * The countdown, restarted for each item and stopped once it is answered.
+   *
+   * Driven off a start timestamp rather than by decrementing a counter: a backgrounded
+   * tab throttles intervals, and a counter would then still be at 7 on return from a
+   * minute away. What is being measured is time in front of the question.
+   */
+  useEffect(() => {
+    if (!item || feedback) return;
+
+    const startedAt = Date.now();
+    setCountdown({ item, secondsLeft: COUNTDOWN_SECONDS });
+
+    const tick = setInterval(() => {
+      const left = Math.max(0, COUNTDOWN_SECONDS - Math.floor((Date.now() - startedAt) / 1000));
+      setCountdown({ item, secondsLeft: left });
+      if (left === 0) clearInterval(tick);
+    }, 250);
+
+    return () => clearInterval(tick);
+  }, [item, feedback]);
+
   const submit = useCallback(async () => {
     if (!item || confidence === null || submitting) return;
     if (
@@ -162,6 +209,47 @@ export function SessionRunner({
       setSubmitting(false);
     }
   }, [item, confidence, submitting, feedback, selectedOptionId, freeText, sessionId, load]);
+
+  /**
+   * Give up on the item and be shown the answer.
+   *
+   * This goes through the same endpoint as an answer and is recorded the same way,
+   * because it is one: the response lands as wrong at the lowest confidence before
+   * the reveal renders. Nothing is shown that has not already been paid for.
+   */
+  const dontKnow = useCallback(async () => {
+    if (!item || submitting || feedback) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/session/${sessionId}/respond`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          itemId: item.itemId,
+          dontKnow: true,
+          latencyMs: Date.now() - shownAt.current,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? dict.current.session.errorRecordAnswer);
+
+      setProgress(data.progress);
+
+      // A benchmark run reveals nothing mid-run, not even for an item given up on.
+      if (data.deferred) {
+        if (data.complete) setDone(true);
+        else await load();
+        return;
+      }
+
+      setFeedback(toFeedbackView(item, data.feedback, true));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [item, submitting, feedback, sessionId, load]);
 
   // Keyboard: 1-4 pick, G/U/C set confidence, Enter submits then advances.
   useEffect(() => {
@@ -274,10 +362,12 @@ export function SessionRunner({
           confidence={confidence}
           submitting={submitting}
           feedback={feedback}
+          secondsLeft={feedback ? null : secondsLeft}
           onSelectOption={setSelectedOptionId}
           onFreeText={setFreeText}
           onConfidence={setConfidence}
           onSubmit={() => void submit()}
+          onDontKnow={() => void dontKnow()}
           onNext={() => void load()}
         />
       )}
@@ -311,7 +401,8 @@ function LoadingSlab({ label }: { label: string }) {
 interface RawMcFeedback {
   correct: boolean;
   explanation: string;
-  chosenOptionId: number;
+  /** Null when the item was given up on rather than answered. */
+  chosenOptionId: number | null;
   misconceptionLabel: string | null;
   options: {
     id: number;
@@ -326,16 +417,21 @@ interface RawMcFeedback {
 interface RawFreeFeedback {
   correct: boolean;
   score: number;
+  /** Null when the item was given up on: there was no answer, so nothing was graded. */
   verdict: {
     criteria: { id: string; met: boolean; evidence_quote: string | null; comment: string }[];
     missing: string[];
     misconceptions_detected: string[];
     verdict_summary: string;
-  };
+  } | null;
   rubric: { id: string; criterion: string }[];
 }
 
-function toFeedbackView(item: ServedItem, raw: RawMcFeedback | RawFreeFeedback): FeedbackView {
+function toFeedbackView(
+  item: ServedItem,
+  raw: RawMcFeedback | RawFreeFeedback,
+  declined = false
+): FeedbackView {
   if (item.kind === 'mc') {
     const mc = raw as RawMcFeedback;
     const options: OptionView[] = mc.options.map((o) => ({
@@ -353,10 +449,34 @@ function toFeedbackView(item: ServedItem, raw: RawMcFeedback | RawFreeFeedback):
       chosenOptionId: mc.chosenOptionId,
       misconceptionLabel: mc.misconceptionLabel,
       options,
+      declined,
     };
   }
 
   const free = raw as RawFreeFeedback;
+
+  // Nothing was written, so nothing was graded. The rubric is shown as what a passing
+  // answer would have had to contain — every criterion unmet, which is the truth.
+  if (!free.verdict) {
+    return {
+      kind: 'free',
+      correct: false,
+      score: 0,
+      threshold: 0.8,
+      criteria: free.rubric.map((r) => ({
+        id: r.id,
+        criterion: r.criterion,
+        met: false,
+        evidenceQuote: null,
+        comment: '',
+      })),
+      missing: [],
+      misconceptionsDetected: [],
+      verdictSummary: '',
+      declined: true,
+    };
+  }
+
   const labels = new Map(free.rubric.map((r) => [r.id, r.criterion]));
   return {
     kind: 'free',

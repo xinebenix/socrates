@@ -47,7 +47,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 181 tests, no network
+npm test          # 205 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -296,12 +296,23 @@ the target behaviour is accurate self-assessment, and reward signals attached to
 correctness push toward avoiding hard cells. The comp also had no confidence control;
 invariant 1 required adding one, built in the same visual language.
 
+Two later additions live on the same answer path. **The ten-second countdown is not a
+time limit** — nothing happens when it expires except that an *I don't know* control
+appears. The delay exists because the attempt to retrieve an answer is the part that
+teaches, and an escape hatch present from the first render gets pressed instead of
+thought about. Taking it records a response — wrong, at the lowest confidence — *before*
+it reveals anything, since a reveal that recorded nothing would let an item be read and
+then answered, and would leave a served slot with no response behind it. **The option
+marks follow the locale**: Α/Β/Γ/Δ in English, of a piece with Τέλος and Γνῶθι σεαυτόν
+elsewhere in the interface, and A/B/C/D in Chinese, where that is simply what a
+multiple-choice option is called.
+
 ---
 
 ## Tests
 
 ```bash
-npm test                 # 181 tests, no network, ~9s
+npm test                 # 205 tests, no network, ~9s
 npm run test:grader      # the grader regression set against the live model
 ```
 

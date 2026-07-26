@@ -574,6 +574,15 @@ label.field-label {
 .confidence-btn .label { font: 400 16px/1 var(--serif); color: var(--ink); }
 .confidence-btn:disabled { opacity: 0.5; cursor: default; }
 
+/* ------------------------------------------------------------- countdown */
+
+/* Quiet on purpose: it counts down to a control appearing, not to a deadline. */
+.countdown {
+  font: 400 13.5px/1 var(--sans);
+  color: var(--muted);
+  padding: 4px 0;
+}
+
 /* ------------------------------------------------------------- feedback */
 
 .feedback {

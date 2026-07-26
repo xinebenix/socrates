@@ -1,7 +1,11 @@
 import { getDb } from '@/lib/db';
 import { getSession } from '@/lib/db/queries';
-import { isConfidence } from '@/lib/mastery/bkt';
-import { submitFreeResponse, submitMcResponse } from '@/lib/pipeline/respond';
+import { isConfidence, type Confidence } from '@/lib/mastery/bkt';
+import {
+  submitDontKnowResponse,
+  submitFreeResponse,
+  submitMcResponse,
+} from '@/lib/pipeline/respond';
 import { finalizeBenchmarkRun, isBenchmarkComplete } from '@/lib/pipeline/benchmark';
 import { sessionProgress } from '@/lib/pipeline/session';
 import { bad, fail, ok, requireNum } from '../../../_shared';
@@ -34,32 +38,41 @@ export async function POST(req: Request, ctx: { params: Promise<{ sessionId: str
       freeText?: string;
       confidence?: string;
       latencyMs?: number;
+      dontKnow?: boolean;
     };
 
     const itemId = requireNum(body.itemId, 'itemId');
+    const latencyMs = Number.isFinite(body.latencyMs) ? Number(body.latencyMs) : null;
 
-    if (!isConfidence(body.confidence)) {
+    // "I don't know" — the learner declines the item and asks for the answer. Not a
+    // bypass of invariant 1: the server sets the confidence itself, at its floor, and
+    // records a wrong answer. Declining is a statement about what the learner knows,
+    // and it is stored as one before anything is revealed.
+    const declined = body.dontKnow === true;
+
+    if (!declined && !isConfidence(body.confidence)) {
       return bad('confidence is required and must be one of: guessing, unsure, confident');
     }
 
-    const latencyMs = Number.isFinite(body.latencyMs) ? Number(body.latencyMs) : null;
     const isFree = typeof body.freeText === 'string';
 
-    const feedback = isFree
-      ? await submitFreeResponse(db, {
-          sessionId,
-          itemId,
-          answerText: body.freeText as string,
-          confidence: body.confidence,
-          latencyMs,
-        })
-      : submitMcResponse(db, {
-          sessionId,
-          itemId,
-          chosenOptionId: requireNum(body.chosenOptionId, 'chosenOptionId'),
-          confidence: body.confidence,
-          latencyMs,
-        });
+    const feedback = declined
+      ? submitDontKnowResponse(db, { sessionId, itemId, latencyMs })
+      : isFree
+        ? await submitFreeResponse(db, {
+            sessionId,
+            itemId,
+            answerText: body.freeText as string,
+            confidence: body.confidence as Confidence,
+            latencyMs,
+          })
+        : submitMcResponse(db, {
+            sessionId,
+            itemId,
+            chosenOptionId: requireNum(body.chosenOptionId, 'chosenOptionId'),
+            confidence: body.confidence as Confidence,
+            latencyMs,
+          });
 
     const progress = sessionProgress(db, sessionId);
 
@@ -77,7 +90,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ sessionId: str
       });
     }
 
-    return ok({ deferred: false, feedback, progress });
+    return ok({ deferred: false, declined, feedback, progress });
   } catch (err) {
     return fail(err);
   }

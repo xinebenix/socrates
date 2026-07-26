@@ -1,12 +1,25 @@
 'use client';
 
 import type { Confidence } from '@/lib/mastery/bkt';
-import { canSubmit, submitHint, type SubmitState } from '@/lib/ui/submitGuard';
+import { canSubmit, submitHintKey, type SubmitState } from '@/lib/ui/submitGuard';
 import { depth } from '@/lib/prompts/depth';
-import { useDict } from '@/components/I18nProvider';
+import { useDict, useLocale } from '@/components/I18nProvider';
 import { fill, type Dict } from '@/lib/i18n/dict';
+import type { Locale } from '@/lib/i18n/locale';
 
-const GREEK = ['Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ'];
+/**
+ * How the options are labelled, per locale.
+ *
+ * English keeps the Greek series — it is of a piece with Τέλος and Γνῶθι σεαυτόν
+ * elsewhere in the interface. Chinese does not: ABCD is what a multiple-choice option
+ * is called there, in every exam a reader has ever sat, and Α/Β/Γ/Δ reads as an
+ * unfamiliar alphabet rather than as a flourish. A reader saying "选 B" should be able
+ * to see a B.
+ */
+const OPTION_MARKS: Record<Locale, readonly string[]> = {
+  en: ['Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ'],
+  zh: ['A', 'B', 'C', 'D', 'E', 'F'],
+};
 
 const CONFIDENCE_CHOICES: {
   value: Confidence;
@@ -49,9 +62,12 @@ export interface McFeedbackView {
   kind: 'mc';
   correct: boolean;
   explanation: string;
-  chosenOptionId: number;
+  /** Null when the learner declined the item rather than answering it. */
+  chosenOptionId: number | null;
   misconceptionLabel: string | null;
   options: OptionView[];
+  /** The answer was revealed on request, not earned. */
+  declined?: boolean;
 }
 
 export interface FreeCriterionView {
@@ -71,6 +87,8 @@ export interface FreeFeedbackView {
   missing: string[];
   misconceptionsDetected: string[];
   verdictSummary: string;
+  /** The rubric was revealed on request; nothing was written, so nothing was graded. */
+  declined?: boolean;
 }
 
 export type FeedbackView = McFeedbackView | FreeFeedbackView;
@@ -89,10 +107,16 @@ export interface ItemCardProps {
   confidence: Confidence | null;
   submitting: boolean;
   feedback: FeedbackView | null;
+  /**
+   * Seconds left before the item can be given up on, or null for no countdown at all.
+   * At zero the "I don't know" control appears; it never appears before then.
+   */
+  secondsLeft: number | null;
   onSelectOption: (id: number) => void;
   onFreeText: (v: string) => void;
   onConfidence: (c: Confidence) => void;
   onSubmit: () => void;
+  onDontKnow: () => void;
   onNext: () => void;
 }
 
@@ -108,16 +132,24 @@ export interface ItemCardProps {
 export function ItemCard(props: ItemCardProps) {
   const {
     kind, stem, nodeTitle, depthLevel, position, total, options, phase,
-    selectedOptionId, freeText, confidence, submitting, feedback,
+    selectedOptionId, freeText, confidence, submitting, feedback, secondsLeft,
   } = props;
 
   const t = useDict();
+  const locale = useLocale();
+  const marks = OPTION_MARKS[locale] ?? OPTION_MARKS.en;
   const state: SubmitState = {
     kind, phase, selectedOptionId, freeText, confidence, submitting,
   };
   const ready = canSubmit(state);
   const answered = phase === 'feedback';
   const d = depth(depthLevel);
+
+  // The escape hatch opens only once the countdown has run out. Ten seconds of
+  // trying to retrieve the answer is the part that does the work; a button that
+  // was there from the first render would be pressed instead of thought about.
+  const canGiveUp = !answered && secondsLeft === 0;
+  const declined = Boolean(feedback?.declined);
 
   return (
     <article className="slab" data-testid="item-card">
@@ -159,7 +191,7 @@ export function ItemCard(props: ItemCardProps) {
               >
                 <span className="accent" aria-hidden />
                 <span className="mark" aria-hidden>
-                  {GREEK[i] ?? String(i + 1)}
+                  {marks[i] ?? String(i + 1)}
                 </span>
                 <span className="body">
                   <span className="text">{o.text}</span>
@@ -242,17 +274,52 @@ export function ItemCard(props: ItemCardProps) {
       )}
 
       {!answered && (
-        <div className="row wrap gap-14" style={{ padding: '22px 30px 28px' }}>
-          <button
-            type="button"
-            className="btn primary"
-            data-testid="submit"
-            disabled={!ready}
-            onClick={props.onSubmit}
-          >
-            {submitting ? t.session.submitting : t.session.submit}
-          </button>
-          <span className="note">{submitting ? t.session.recording : submitHint(state)}</span>
+        <div style={{ padding: '22px 30px 28px' }}>
+          <div className="row wrap gap-14">
+            <button
+              type="button"
+              className="btn primary"
+              data-testid="submit"
+              disabled={!ready}
+              onClick={props.onSubmit}
+            >
+              {submitting ? t.session.submitting : t.session.submit}
+            </button>
+
+            {secondsLeft !== null && secondsLeft > 0 && (
+              // Ticking text, hidden from screen readers: a per-second announcement
+              // would drown out the question it is counting against.
+              <span className="countdown tabular" data-testid="countdown" aria-hidden>
+                {fill(t.session.countdownRemaining, { seconds: secondsLeft })}
+              </span>
+            )}
+
+            {/* The live region exists from the first render, empty, so that the
+                button's arrival is what gets announced. */}
+            <span aria-live="polite">
+              {canGiveUp && (
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="dont-know"
+                  disabled={submitting}
+                  onClick={props.onDontKnow}
+                >
+                  {t.session.dontKnow}
+                </button>
+              )}
+            </span>
+
+            <span className="note">
+              {submitting ? t.session.recording : t.session[submitHintKey(state)]}
+            </span>
+          </div>
+
+          {canGiveUp && (
+            <p className="note" style={{ margin: '12px 0 0' }}>
+              {t.session.dontKnowHint}
+            </p>
+          )}
         </div>
       )}
 
@@ -260,19 +327,25 @@ export function ItemCard(props: ItemCardProps) {
         <div className="feedback" data-correct={String(feedback.correct)} data-testid="feedback">
           <div className="row wrap gap-14" style={{ alignItems: 'baseline', marginBottom: 12 }}>
             <span className="feedback-head">
-              {feedback.correct ? t.session.feedbackHeadCorrect : t.session.feedbackHeadWrong}
+              {declined
+                ? t.session.feedbackHeadDontKnow
+                : feedback.correct
+                  ? t.session.feedbackHeadCorrect
+                  : t.session.feedbackHeadWrong}
             </span>
             <span className="eyebrow">
-              {feedback.kind === 'free'
-                ? fill(t.session.criteriaMetSummary, {
-                    met: feedback.criteria.filter((c) => c.met).length,
-                    criteria: feedback.criteria.length,
-                    score: Math.round(feedback.score * 100),
-                    threshold: Math.round(feedback.threshold * 100),
-                  })
-                : feedback.correct
-                  ? t.session.feedbackEyebrowCorrect
-                  : t.session.feedbackEyebrowWrong}
+              {declined
+                ? t.session.feedbackEyebrowDontKnow
+                : feedback.kind === 'free'
+                  ? fill(t.session.criteriaMetSummary, {
+                      met: feedback.criteria.filter((c) => c.met).length,
+                      criteria: feedback.criteria.length,
+                      score: Math.round(feedback.score * 100),
+                      threshold: Math.round(feedback.threshold * 100),
+                    })
+                  : feedback.correct
+                    ? t.session.feedbackEyebrowCorrect
+                    : t.session.feedbackEyebrowWrong}
             </span>
           </div>
 
@@ -319,10 +392,11 @@ export function ItemCard(props: ItemCardProps) {
 
 function FreeFeedbackBody({ feedback }: { feedback: FreeFeedbackView }) {
   const t = useDict();
+  const declined = Boolean(feedback.declined);
   return (
     <div className="stack gap-14" style={{ marginBottom: 22 }}>
       <p className="serif-body" style={{ margin: 0, maxWidth: '62ch' }}>
-        {feedback.verdictSummary}
+        {declined ? t.session.dontKnowFreeSummary : feedback.verdictSummary}
       </p>
 
       <div className="ledger" data-testid="criteria">
@@ -337,7 +411,10 @@ function FreeFeedbackBody({ feedback }: { feedback: FreeFeedbackView }) {
                 <span className="option-note correct">“{c.evidenceQuote}”</span>
               ) : (
                 <span className="option-note wrong">
-                  {c.comment || t.session.criterionUnmetFallback}
+                  {c.comment ||
+                    (declined
+                      ? t.session.dontKnowCriterionNote
+                      : t.session.criterionUnmetFallback)}
                 </span>
               )}
             </span>

@@ -10,6 +10,9 @@ import userEvent from '@testing-library/user-event';
 import { ItemCard, type ItemCardProps, type McFeedbackView } from '../../components/ItemCard';
 import { canSubmit } from '../../lib/ui/submitGuard';
 
+/** The full countdown: an item that has just been put on screen. */
+const COUNTDOWN_SECONDS = 10;
+
 const OPTIONS = [
   { id: 11, position: 1, text: 'Society as a whole holds title to the means of production.' },
   { id: 12, position: 2, text: 'A government agency holds title on behalf of the public.' },
@@ -74,10 +77,12 @@ function makeProps(overrides: Partial<ItemCardProps> = {}): ItemCardProps {
     confidence: null,
     submitting: false,
     feedback: null,
+    secondsLeft: COUNTDOWN_SECONDS,
     onSelectOption: vi.fn(),
     onFreeText: vi.fn(),
     onConfidence: vi.fn(),
     onSubmit: vi.fn(),
+    onDontKnow: vi.fn(),
     onNext: vi.fn(),
     ...overrides,
   };
