@@ -84,7 +84,7 @@ export default async function BenchmarkPage({
               {coverage.map((c) => (
                 <div className="ledger-row" key={c.nodeId}>
                   <span className={`dot ${c.itemCount > 0 ? 'ok' : 'miss'}`} aria-hidden />
-                  <span className="serif-body" style={{ flex: 1, fontSize: 16 }}>
+                  <span className="serif-body col-fill" style={{ fontSize: 16 }}>
                     {c.title}
                   </span>
                   <span className="eyebrow tabular" style={{ flex: 'none' }}>
@@ -126,10 +126,10 @@ export default async function BenchmarkPage({
                     .reverse()
                     .map((r) => (
                       <div className="ledger-row" key={r.id} style={{ alignItems: 'flex-start' }}>
-                        <span className="eyebrow tabular" style={{ width: 100, flex: 'none' }}>
+                        <span className="eyebrow tabular col-label date">
                           {r.runAt.slice(0, 10)}
                         </span>
-                        <span className="stack gap-6" style={{ flex: 1 }}>
+                        <span className="stack gap-6 col-fill">
                           <span className="note">
                             {Object.entries(r.results.byDepth ?? {})
                               .sort(([a], [b]) => a.localeCompare(b))
@@ -162,10 +162,10 @@ export default async function BenchmarkPage({
               <div className="ledger">
                 {frozen.map((i) => (
                   <div className="ledger-row" key={i.id} style={{ alignItems: 'flex-start' }}>
-                    <span className="eyebrow" style={{ width: 170, flex: 'none' }}>
+                    <span className="eyebrow col-label">
                       {i.node_title} · D{i.depth}
                     </span>
-                    <span className="serif-body" style={{ flex: 1, fontSize: 16 }}>
+                    <span className="serif-body col-fill" style={{ fontSize: 16 }}>
                       {i.stem}
                     </span>
                   </div>

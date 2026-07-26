@@ -98,16 +98,14 @@ export default async function DashboardPage({
               <>
                 {active.length > 0 && (
                   <p className="note" style={{ marginBottom: 12, color: 'var(--terra)' }}>
-                    {active.length} belief{active.length === 1 ? '' : 's'} selected twice or more in
-                    the last 20 responses. Those nodes now get a remediation slice at the top of
-                    every session, with the same belief put back in the option set.
+                    {fill(t.dashboard.activeBeliefsNote, { count: active.length })}
                   </p>
                 )}
                 <div className="ledger">
                   {s.misconceptionProfile.slice(0, 14).map((m) => (
                     <div className="ledger-row" key={m.id} style={{ alignItems: 'flex-start' }}>
                       <span className={`dot ${m.active ? 'miss' : 'ok'}`} aria-hidden />
-                      <span className="stack gap-6" style={{ flex: 1, minWidth: 0 }}>
+                      <span className="stack gap-6 col-fill">
                         <span className="serif-body" style={{ fontSize: 16 }}>
                           {m.label}
                         </span>
@@ -130,7 +128,7 @@ export default async function DashboardPage({
           </div>
 
           <div className="row wrap gap-22" style={{ alignItems: 'stretch' }}>
-            <div className="panel" style={{ flex: 1, minWidth: 320 }}>
+            <div className="panel" style={{ flex: 1, minWidth: 'min(320px, 100%)' }}>
               <p className="section-label">{t.dashboard.dueForecastLabel}</p>
               <div className="spark">
                 {s.dueForecast.map((d, i) => (
@@ -152,7 +150,7 @@ export default async function DashboardPage({
               </p>
             </div>
 
-            <div className="panel" style={{ flex: 1, minWidth: 320 }}>
+            <div className="panel" style={{ flex: 1, minWidth: 'min(320px, 100%)' }}>
               <p className="section-label">{t.dashboard.retentionLabel}</p>
               {s.retention.length === 0 ? (
                 <p className="note">{t.dashboard.retentionEmpty}</p>
@@ -196,10 +194,10 @@ export default async function DashboardPage({
               <div className="ledger">
                 {s.benchmarkHistory.map((b) => (
                   <div className="ledger-row" key={b.runAt}>
-                    <span className="eyebrow tabular" style={{ width: 100, flex: 'none' }}>
+                    <span className="eyebrow tabular col-label date">
                       {b.runAt.slice(0, 10)}
                     </span>
-                    <span className="serif-body" style={{ flex: 1 }}>
+                    <span className="serif-body col-fill">
                       {Object.entries(b.byDepth)
                         .map(([d, v]) => `${d} ${Math.round(v * 100)}%`)
                         .join('  ·  ') || '—'}

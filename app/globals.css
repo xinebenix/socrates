@@ -111,6 +111,18 @@ body {
   min-height: 100vh;
   background: var(--page-bg);
   background-attachment: fixed;
+
+  /*
+   * A single unbreakable token must not push the page sideways.
+   *
+   * Nearly every string on screen is content someone else wrote — a stem, an option, a
+   * URL pasted into source material, a provider error echoed into the warning box — and
+   * one of them being 140 characters with no space in it should not turn the whole
+   * document into a horizontal scroll. Inherited rather than applied per surface,
+   * because the surface it happens on will be the one not on the list. It costs nothing
+   * on ordinary text: it only takes effect for a word that cannot fit a line by itself.
+   */
+  overflow-wrap: break-word;
 }
 
 input,
@@ -574,6 +586,18 @@ label.field-label {
 .confidence-btn .label { font: 400 16px/1 var(--serif); color: var(--ink); }
 .confidence-btn:disabled { opacity: 0.5; cursor: default; }
 
+/* ----------------------------------------------------------- item card */
+
+/*
+ * The card's own padding, as classes rather than inline styles, so the narrow-screen
+ * block below can take it back. Thirty pixels a side is right at reading width and
+ * absurd at 375, where it spends a sixth of the screen on margin while the stem wraps
+ * every four words.
+ */
+.card-stem { padding: 30px 30px 8px; }
+.card-body { padding: 18px 30px 4px; }
+.card-actions { padding: 22px 30px 28px; }
+
 /* ------------------------------------------------------------- countdown */
 
 /* Quiet on purpose: it counts down to a control appearing, not to a deadline. */
@@ -718,6 +742,26 @@ table.heatmap td.node-col {
   padding: 14px 18px;
   background: var(--surface);
 }
+
+/*
+ * The fixed-width label column that opens most ledger rows — a date, a node title, a
+ * node title with its depth. Three widths, one class, because the width is the part
+ * that differs and the narrow-screen behaviour is the part that does not: below the
+ * breakpoint every one of them stops being a column and becomes the row's first line.
+ *
+ * These were inline styles. They had to move into the stylesheet to be overridable at
+ * all — an inline width beats any media query, and inside `.ledger`'s `overflow:
+ * hidden` the result was not a scrollbar but a row whose buttons were simply cut off
+ * the side of the screen.
+ */
+.ledger-row .col-label { flex: none; width: 170px; }
+.ledger-row .col-label.short { width: 150px; }
+.ledger-row .col-label.date { width: 100px; }
+.ledger-row .col-mark { flex: none; width: 34px; }
+
+/* The elastic column beside them. `min-width: 0` is what lets it actually shrink
+   inside a flex row rather than holding the row open at its longest word. */
+.ledger-row .col-fill { flex: 1 1 auto; min-width: 0; }
 .ledger-row + .ledger-row { border-top: 1px solid var(--rule-soft); }
 .ledger-row .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; position: relative; top: -1px; }
 .ledger-row .dot.ok { background: var(--verd); }
@@ -842,6 +886,79 @@ table.mini tr:last-child td { border-bottom: none; }
 }
 .spend-bar > div { height: 100%; border-radius: 2px; background: var(--verd); }
 .spend-bar > div.over { background: var(--terra); }
+
+/* ----------------------------------------------------------- narrow screens */
+
+/*
+ * Two breakpoints, and nothing between them.
+ *
+ * Most of the layout is already fluid — every column is a max-width, the display type
+ * is clamped, the tile grids are auto-fit — so what is left here is the two things
+ * fluid layout cannot do on its own. Rows built out of fixed-width label columns have
+ * to stop being columns, because a 170px gutter beside a 100px-wide note is not a
+ * narrower version of the same design, it is an unreadable one. And the generous
+ * padding has to come off, because it was chosen against a 780px column.
+ *
+ * 700px is where the two-column ledger rows stop working. 560px is a phone held
+ * upright, and is where padding starts costing more than it buys.
+ */
+
+@media (max-width: 700px) {
+  /* Four nav links stacked cost four lines of a sticky header, on every screen, for
+     the whole session. One horizontally scrollable line keeps the header the height
+     of the wordmark it sits beside. */
+  .topbar { flex-wrap: wrap; gap: 10px 14px; padding: 12px 16px; }
+  .topbar nav {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    gap: 13px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .topbar nav::-webkit-scrollbar { display: none; }
+  /* Tracking tuned for a wide header costs about 40px across four links, which is the
+     difference between the row fitting a phone and scrolling. A link that wraps in the
+     middle of "Item health" reads as two links, so it stays on one line either way. */
+  .topbar nav a { white-space: nowrap; letter-spacing: 0.13em; }
+  .topbar-end { margin-left: auto; }
+
+  .ledger-row { flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; }
+  .ledger-row .col-label,
+  .ledger-row .col-label.short,
+  .ledger-row .col-label.date { width: 100%; }
+  .ledger-row .col-mark { width: auto; }
+  /* Sixty per cent, not a hundred: enough that the elastic column drops below the
+     buttons and the counts rather than being squeezed to a word a line, but not so
+     much that it takes a whole line of its own when there was room to share one. */
+  .ledger-row .col-fill { flex-basis: 60%; }
+}
+
+@media (max-width: 560px) {
+  main.page { padding: clamp(20px, 4vh, 44px) 14px 64px; }
+
+  .slab-head { padding: 14px 18px; gap: 9px; }
+  .slab-body { padding: 20px 18px; }
+  .card-stem { padding: 24px 18px 6px; }
+  .card-body { padding: 16px 18px 4px; }
+  .card-actions { padding: 20px 18px 24px; }
+  .confidence { padding: 18px 18px 0; }
+  .feedback { padding: 22px 18px 24px; }
+  .option { padding: 13px 13px 13px 16px; gap: 11px; }
+  .panel { padding: 16px 15px; }
+  .tile { padding: 16px 15px; }
+  .warnbox { padding: 14px 15px; }
+  .btn { padding: 12px 17px; }
+
+  /* Six depth columns and a row label need 317px at these sizes, which is what makes
+     the grid fit a 375px phone rather than scroll on one. Below that it still scrolls
+     sideways, which is the honest outcome — there is no arrangement of a 7-column
+     table that fits 320px and can still be read. */
+  .cell-swatch { min-width: 34px; height: 34px; }
+  table.heatmap th.node-col { width: 30%; }
+  table.heatmap td.node-col { font-size: 14px; padding-right: 8px; }
+}
 
 /* On a narrow screen the panel spans the viewport rather than hanging off it. */
 @media (max-width: 620px) {

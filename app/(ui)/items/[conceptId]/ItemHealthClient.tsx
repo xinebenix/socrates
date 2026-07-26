@@ -84,13 +84,9 @@ export function ItemHealthTable({
           {withActivity.map((c) => (
             <div key={c.cellId}>
               <div className="ledger-row">
-                <span className="eyebrow" style={{ width: 170, flex: 'none' }}>
-                  {c.nodeTitle}
-                </span>
-                <span className="eyebrow-accent" style={{ width: 34, flex: 'none' }}>
-                  D{c.depth}
-                </span>
-                <span className="note tabular" style={{ flex: 1 }}>
+                <span className="eyebrow col-label">{c.nodeTitle}</span>
+                <span className="eyebrow-accent col-mark">D{c.depth}</span>
+                <span className="note tabular col-fill">
                   {fill(c.itemCount === 1 ? t.items.cellItemCountOne : t.items.cellItemCountOther, {
                     count: c.itemCount,
                   })}{' '}
@@ -106,22 +102,26 @@ export function ItemHealthTable({
                     </>
                   )}
                 </span>
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={busy}
-                  onClick={() => void open(c.cellId)}
-                >
-                  {openCell === c.cellId ? t.items.hideItemsButton : t.items.showItemsButton}
-                </button>
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={busy}
-                  onClick={() => void act({ action: 'regenerate', cellId: c.cellId }, c.cellId)}
-                >
-                  {t.items.generateButton}
-                </button>
+                {/* One group, so the pair wraps together when the row runs out of
+                    width rather than leaving one button stranded on a line. */}
+                <span className="row gap-9" style={{ flex: 'none' }}>
+                  <button
+                    type="button"
+                    className="btn small"
+                    disabled={busy}
+                    onClick={() => void open(c.cellId)}
+                  >
+                    {openCell === c.cellId ? t.items.hideItemsButton : t.items.showItemsButton}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    disabled={busy}
+                    onClick={() => void act({ action: 'regenerate', cellId: c.cellId }, c.cellId)}
+                  >
+                    {t.items.generateButton}
+                  </button>
+                </span>
               </div>
 
               {openCell === c.cellId && (

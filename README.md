@@ -307,6 +307,20 @@ marks follow the locale**: Α/Β/Γ/Δ in English, of a piece with Τέλος an
 elsewhere in the interface, and A/B/C/D in Chinese, where that is simply what a
 multiple-choice option is called.
 
+**Two breakpoints, at 700px and 560px.** Most of the layout is fluid without them —
+every column is a max-width, the display type is clamped, the tile grids are auto-fit —
+so the media queries carry only what fluid layout cannot do by itself. Rows built from
+fixed-width label columns stop being columns and become stacked lines: a 170px gutter
+beside a 100px note is not a narrower version of that design, and inside the ledger's
+`overflow: hidden` the buttons past it were not merely cramped, they were cut off the
+side of the screen and unreachable. Padding chosen against a 780px column comes off.
+The mastery grid's swatches shrink, which is the difference between six depth columns
+plus a row label fitting a 375px phone and not: it needs 317px, so it fits from about
+there up and scrolls sideways below it.
+One rule sits outside the breakpoints: `overflow-wrap: break-word` on `body`, so that a
+long unbreakable token — a URL in pasted source material, a provider error id echoed
+into the warning box — wraps instead of turning the page into a horizontal scroll.
+
 ---
 
 ## Tests

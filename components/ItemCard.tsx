@@ -169,12 +169,12 @@ export function ItemCard(props: ItemCardProps) {
         </span>
       </div>
 
-      <div style={{ padding: '30px 30px 8px' }}>
+      <div className="card-stem">
         <h2 className="slab-stem">{stem}</h2>
       </div>
 
       {kind === 'mc' ? (
-        <div className="stack gap-9" style={{ padding: '18px 30px 4px' }}>
+        <div className="stack gap-9 card-body">
           {options.map((o, i) => {
             const chosen = selectedOptionId === o.id;
             const fb = answered ? optionRationale(feedback, o.id) : null;
@@ -227,7 +227,7 @@ export function ItemCard(props: ItemCardProps) {
           })}
         </div>
       ) : (
-        <div style={{ padding: '18px 30px 4px' }}>
+        <div className="card-body">
           <label className="field-label" htmlFor="free-answer">
             {t.session.yourAnswerLabel}
           </label>
@@ -274,7 +274,7 @@ export function ItemCard(props: ItemCardProps) {
       )}
 
       {!answered && (
-        <div style={{ padding: '22px 30px 28px' }}>
+        <div className="card-actions">
           <div className="row wrap gap-14">
             <button
               type="button"

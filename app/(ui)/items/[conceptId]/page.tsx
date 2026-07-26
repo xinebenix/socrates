@@ -69,10 +69,10 @@ export default async function ItemsPage({
                 {dead.map((d) => (
                   <div className="ledger-row" key={d.optionId} style={{ alignItems: 'flex-start' }}>
                     <span className="dot miss" aria-hidden />
-                    <span className="eyebrow" style={{ width: 150, flex: 'none' }}>
+                    <span className="eyebrow col-label short">
                       {d.nodeTitle} · D{d.depth}
                     </span>
-                    <span className="serif-body" style={{ flex: 1, fontSize: 16 }}>
+                    <span className="serif-body col-fill" style={{ fontSize: 16 }}>
                       {d.text}
                     </span>
                     <span className="eyebrow tabular" style={{ flex: 'none' }}>
@@ -93,7 +93,7 @@ export default async function ItemsPage({
               {health.map((h) => (
                 <div className="ledger-row" key={h.nodeId}>
                   <span className={`dot ${h.alarm ? 'miss' : 'ok'}`} aria-hidden />
-                  <span className="serif-body" style={{ flex: 1, fontSize: 16 }}>
+                  <span className="serif-body col-fill" style={{ fontSize: 16 }}>
                     {h.nodeTitle}
                   </span>
                   <span className="eyebrow tabular" style={{ flex: 'none' }}>
