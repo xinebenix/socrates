@@ -6,6 +6,7 @@ import { isDue } from '@/lib/schedule/decay';
 import { now } from '@/lib/clock';
 import { Topbar } from '@/components/Chrome';
 import { ConceptList, NewConceptForm } from './ConceptsClient';
+import { SpendStrip } from '@/components/SpendStrip';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,6 +57,8 @@ export default async function ConceptsPage() {
               <ConceptList concepts={concepts} />
             </div>
           )}
+
+          <SpendStrip />
         </div>
       </main>
     </div>

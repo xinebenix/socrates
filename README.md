@@ -32,6 +32,9 @@ npm run worker                    # in a second terminal — keeps the item buff
 | `GYM_DB` | `./data/gym.db` | |
 | `GYM_BUFFER_TARGET` | `3` | validated, unserved items kept ready per plausibly-due cell |
 | `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12 |
+| `GYM_LOOKAHEAD_CELLS` | `12` | cells the worker pre-generates for — the main cost dial |
+| `GYM_MONTHLY_BUDGET_USD` | — | pauses pre-generation past this estimate; sessions keep running |
+| `GYM_PRICES` | — | JSON price overrides, if the built-in table has gone stale |
 | `GYM_EFFORT_ITEM` | `medium` | reasoning effort for item generation — the hot path |
 | `GYM_EFFORT_BLUEPRINT` · `_VALIDATE` · `_GRADE` | `high` | lower these only deliberately; see [docs/DEPLOY.md](docs/DEPLOY.md) |
 
@@ -43,7 +46,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 124 tests, no network
+npm test          # 135 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -216,6 +219,15 @@ not three separate gaps.
 ones. Until the benchmark set has items in it, improvement and item drift are
 indistinguishable and no chart here can separate them.
 
+**It costs real money, and the app says how much.** Every model call records its exact
+token counts; the concepts page shows the running total and `/api/health` breaks it down
+by call site. Tokens are exact, dollars are estimated from a price table that will drift
+— `GYM_PRICES` overrides it. The number worth watching is *ahead of use*: money already
+spent on pre-generated items you have not been shown. `GYM_MONTHLY_BUDGET_USD` caps it,
+and deliberately caps only the speculative half — over budget, sessions still run and
+generate inline, because a tool that refuses to work when you sit down to use it is a
+tool you stop opening.
+
 **Coverage is bounded by the source.** Free-generating from a topic name produces
 canonically-shaped items that test the textbook version and systematically miss whatever
 is idiosyncratic about your own understanding. An empty `source_text` is a degraded mode
@@ -243,7 +255,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 124 tests, no network, ~1.7s
+npm test                 # 135 tests, no network, ~1.8s
 npm run test:grader      # the grader regression set against the live model
 ```
 

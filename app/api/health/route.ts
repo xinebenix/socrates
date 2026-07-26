@@ -9,6 +9,13 @@ import { STRONG_FROM_DEPTH, effortFor, model, modelFor } from '@/lib/llm/client'
 import { bufferConcurrency, bufferTarget } from '@/lib/pipeline/buffer';
 import { listConcepts } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
+import {
+  budgetStatus,
+  dayKey,
+  spendBy,
+  totalSpend,
+  unservedItemSpend,
+} from '@/lib/cost';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -119,6 +126,21 @@ export async function GET(req: Request) {
       bufferConcurrency: bufferConcurrency(),
       item: timingSummary(db, 'generate.timing'),
       blueprint: timingSummary(db, 'blueprint.generated'),
+    };
+
+    // Tokens are exact; the money is an estimate off a price table that will drift.
+    report.spend = {
+      disclaimer:
+        'Token counts come from the API and are exact. USD figures are estimated from ' +
+        'a built-in price table that may be out of date — override it with GYM_PRICES ' +
+        'and check against your Anthropic billing page.',
+      budget: budgetStatus(db),
+      today: totalSpend(db, dayKey()),
+      last7Days: totalSpend(db, dayKey(-6)),
+      allTime: totalSpend(db),
+      byKind: spendBy(db, 'kind', dayKey(-29)),
+      byModel: spendBy(db, 'model', dayKey(-29)),
+      aheadOfUse: unservedItemSpend(db),
     };
 
     report.ops = {

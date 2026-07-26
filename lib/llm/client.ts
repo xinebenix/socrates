@@ -144,8 +144,16 @@ export function setTransport(t: Transport | null): void {
   transport = t;
 }
 
-async function send(request: Record<string, unknown>): Promise<string> {
-  if (transport) return transport(request);
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+}
+
+const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+
+async function send(request: Record<string, unknown>): Promise<{ text: string; usage: Usage }> {
+  if (transport) return { text: await transport(request), usage: NO_USAGE };
 
   // Streaming keeps a long generation from tripping the SDK's HTTP timeout.
   const stream = getClient().messages.stream(request as never);
@@ -160,7 +168,35 @@ async function send(request: Record<string, unknown>): Promise<string> {
   if (!text || text.type !== 'text') {
     throw new SchemaViolation(['response contained no text block']);
   }
-  return text.text;
+
+  const u = message.usage;
+  return {
+    text: text.text,
+    usage: {
+      inputTokens: u?.input_tokens ?? 0,
+      // Thinking tokens are billed as output, which is why effort is a cost dial and
+      // not only a latency one.
+      outputTokens: u?.output_tokens ?? 0,
+      cachedTokens: u?.cache_read_input_tokens ?? 0,
+    },
+  };
+}
+
+/**
+ * Where usage goes. The client cannot import the database directly — it is used from
+ * scripts and tests that have none — so the recorder is injected at startup.
+ */
+export type UsageSink = (record: {
+  name: string;
+  model: string;
+  usage: Usage;
+  ms: number;
+}) => void;
+
+let usageSink: UsageSink | null = null;
+
+export function setUsageSink(sink: UsageSink | null): void {
+  usageSink = sink;
 }
 
 /**
@@ -173,7 +209,18 @@ export async function structured<T>(call: StructuredCall): Promise<StructuredRes
 
   for (let attempt = 1; attempt <= MAX_SCHEMA_RETRIES; attempt++) {
     try {
-      const raw = await send(request);
+      const startedAt = Date.now();
+      const { text: raw, usage } = await send(request);
+
+      // Recorded per attempt, not per call: a schema retry is a second billed call,
+      // and hiding that would make the accounting flatter than the invoice.
+      usageSink?.({
+        name: call.name,
+        model: (request.model as string) ?? model(),
+        usage,
+        ms: Date.now() - startedAt,
+      });
+
       const parsed = JSON.parse(raw) as unknown;
       const problems = validateShape(parsed, call.schema);
       if (problems.length > 0) throw new SchemaViolation(problems);

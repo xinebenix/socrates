@@ -291,11 +291,80 @@ first session and filling after it.
 
 ## Cost
 
-Two independent meters. Railway is a small always-on container plus a 1 GB volume.
-Anthropic is the real variable: every item is a generation call plus a blind validation
-call, both Opus. `GYM_BUFFER_TARGET` is the dial — it trades tokens for the buffer
-never being empty when you sit down. Drop it to `1` if spend matters more than the
-occasional pause.
+Two independent meters. Railway is a small always-on container plus a 1 GB volume, and
+it is not the one to worry about. Anthropic is.
+
+### Where the money actually goes
+
+The unit is not the session, it is the **item**, and an item is two calls: write it,
+then blind-validate it. On top of that the worker generates *ahead* of you. That
+multiplier is the thing that surprises people:
+
+| | Default | |
+|---|---|---|
+| Cells the worker looks ahead over | 12 | `GYM_LOOKAHEAD_CELLS` |
+| Items kept ready per cell | 3 | `GYM_BUFFER_TARGET` |
+| **Items committed per concept** | **36** | = 72 model calls |
+| Items a 20-question session uses | 20 | |
+
+Those pre-generated items are not wasted — they are served eventually — but they are
+next month's spending brought forward into today. Before this was tunable the lookahead
+was 24 cells, i.e. 72 items and 144 calls per concept. If you train once every few days,
+`GYM_LOOKAHEAD_CELLS=6` and `GYM_BUFFER_TARGET=1` cut the commitment by 6× and cost you
+a slower first item.
+
+### Seeing it
+
+The app meters itself. Every call records its exact token counts, and the concepts page
+shows the running total; `/api/health` has the full breakdown under `spend`:
+
+```bash
+curl -s https://$DOMAIN/api/health -H "Authorization: Bearer $TOKEN" | jq .spend
+```
+
+**Tokens are exact — they come from the API. Dollars are an estimate** from a price
+table baked into `lib/cost.ts` that will go stale. Check it against your billing page
+once, and if it is wrong set `GYM_PRICES`:
+
+```
+GYM_PRICES={"claude-opus-5":{"input":15,"output":75,"cachedInput":1.5}}
+```
+
+`spend.aheadOfUse` is the number to watch: money already spent on items you have not
+been shown yet. If it keeps climbing, your lookahead is wider than your training habit.
+
+### Capping it
+
+```
+GYM_MONTHLY_BUDGET_USD=20
+```
+
+When the month's *estimate* passes the limit, **pre-generation stops and sessions keep
+working.** Being told you are out of budget when you sit down to train is how a tool
+gets abandoned, so the cap only ever stops speculative work. Over budget, items are
+generated one at a time as you reach them — slower, and you only pay for questions you
+actually see. It resets on the first of the month, and because it runs off the estimate
+it is a guardrail rather than a guarantee.
+
+### Making it cheaper
+
+In rough order of savings per unit of regret:
+
+1. **`GYM_LOOKAHEAD_CELLS=6`, `GYM_BUFFER_TARGET=1`** — the big one, and it costs only
+   latency. Combined with `GYM_MONTHLY_BUDGET_USD` this is the whole answer for most
+   people.
+2. **`GYM_EFFORT_ITEM=low`** — thinking tokens are billed as output, at the output rate.
+   Effort is a cost dial as much as a latency one.
+3. **`GYM_MODEL_VALIDATE=claude-sonnet-5`** — the validator runs on *every* item and is
+   now the largest single line, since D1–D3 writing already moved to Sonnet. I argued
+   against touching it on quality grounds and I still would, but if the choice is
+   between a Sonnet validator and not using the app, take the Sonnet validator: an
+   imperfect gate beats no practice.
+4. **Fewer, longer sessions.** The fixed cost is per item, so session length is a linear
+   dial you already have in the UI.
+
+What I would not cut: the blueprint. It runs once per concept, it is a rounding error
+against a month of items, and everything downstream inherits it.
 
 ## Backups
 

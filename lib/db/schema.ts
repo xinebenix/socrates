@@ -134,6 +134,25 @@ CREATE TABLE IF NOT EXISTS ops_log (
   detail  TEXT
 );
 
+-- Token accounting. Every model call lands here, because a tool whose running cost
+-- is invisible is a tool you stop using — and the interesting number is never the
+-- total, it is which call site is spending it and whether the item was ever served.
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id             INTEGER PRIMARY KEY,
+  at             TEXT NOT NULL,
+  day            TEXT NOT NULL,          -- YYYY-MM-DD, for cheap bucketing
+  call_site      TEXT NOT NULL,          -- blueprint | item-mc-d3 | validate | grade
+  kind           TEXT NOT NULL,          -- blueprint | item | validate | grade
+  model          TEXT NOT NULL,
+  input_tokens   INTEGER NOT NULL DEFAULT 0,
+  output_tokens  INTEGER NOT NULL DEFAULT 0,
+  cached_tokens  INTEGER NOT NULL DEFAULT 0,
+  ms             INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_day ON llm_usage(day);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_at ON llm_usage(at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_cells_due ON cells(next_due_at);
 CREATE INDEX IF NOT EXISTS idx_responses_cell ON responses(cell_id, answered_at);
 CREATE INDEX IF NOT EXISTS idx_items_cell ON items(cell_id, frozen, retired);

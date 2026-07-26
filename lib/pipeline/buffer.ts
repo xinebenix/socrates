@@ -39,8 +39,22 @@ export function bufferConcurrency(): number {
   return 4;
 }
 
-/** How many cells ahead of the session runner the worker looks. */
-const LOOKAHEAD_CELLS = 24;
+/**
+ * How many cells ahead of the session runner the worker looks.
+ *
+ * This is the cost dial nobody thinks to look at. At 24 cells and a target of 3, the
+ * worker commits to 72 items per concept — 144 model calls — to serve the 20 a
+ * session actually uses. Those items are not wasted, they are served eventually, but
+ * it is a month of spending brought forward into today, which is the wrong trade for
+ * a tool you are still deciding whether to keep using.
+ *
+ * Twelve is roughly one session's breadth. Raise it if you train several times a day.
+ */
+export function lookaheadCells(): number {
+  const raw = Number(process.env.GYM_LOOKAHEAD_CELLS);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(Math.floor(raw), 60);
+  return 12;
+}
 
 export interface TopUpReport {
   generated: number;
@@ -75,7 +89,7 @@ export async function topUpBuffer(
   const maxGenerations = opts.maxGenerations ?? 6;
   const report: TopUpReport = { generated: 0, failed: 0, skipped: 0 };
 
-  const due = plausiblyDueCells(db, conceptId, LOOKAHEAD_CELLS).map((c) => c.cellId);
+  const due = plausiblyDueCells(db, conceptId, lookaheadCells()).map((c) => c.cellId);
   const ordered = opts.priorityCellIds?.length
     ? [...new Set([...opts.priorityCellIds, ...due])]
     : due;

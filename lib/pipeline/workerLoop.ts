@@ -14,6 +14,10 @@ import { getDb } from '../db';
 import { listConcepts } from '../db/queries';
 import { logEvent } from '../ops';
 import { bufferTarget, topUpBuffer } from './buffer';
+import { budgetStatus, speculativeGenerationAllowed } from '../cost';
+
+/** Logged once per crossing, not once per tick. */
+let budgetWarned = false;
 
 export interface WorkerStatus {
   running: boolean;
@@ -54,6 +58,26 @@ export function workerIntervalMs(): number {
 export async function tick(maxGenerationsPerConcept = 8): Promise<void> {
   const started = Date.now();
   const db = getDb();
+
+  // The budget stops speculative work, never a session in progress. Over budget the
+  // app still trains, generating inline — slower, and only for items actually served.
+  if (!speculativeGenerationAllowed(db)) {
+    const budget = budgetStatus(db);
+    if (!budgetWarned) {
+      budgetWarned = true;
+      logEvent(db, 'warn', 'budget.exceeded', {
+        month: budget.month,
+        limitUsd: budget.limitUsd,
+        spentThisMonthUsd: budget.spentThisMonthUsd,
+        effect: 'pre-generation paused; sessions still run, generating inline',
+      });
+    }
+    status.ticks += 1;
+    status.lastTickAt = new Date(started).toISOString();
+    status.lastTickMs = Date.now() - started;
+    return;
+  }
+  budgetWarned = false;
 
   for (const concept of listConcepts(db)) {
     try {
