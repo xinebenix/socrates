@@ -12,12 +12,123 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { makeFakeLlm } from './fakeLlm';
 import { makeFixture } from './helpers';
 import { setTransport } from '../lib/llm/client';
-import { bufferConcurrency, topUpBuffer } from '../lib/pipeline/buffer';
+import { bufferConcurrency, bufferTarget, topUpBuffer } from '../lib/pipeline/buffer';
+import { generateItemsForCell, summarizeFailure } from '../lib/pipeline/generateItem';
+import { MAX_ITEMS_PER_CALL } from '../lib/prompts/itemMc';
 import { listCells } from '../lib/db/queries';
 
 afterEach(() => {
   setTransport(null);
   delete process.env.GYM_BUFFER_CONCURRENCY;
+  delete process.env.GYM_BUFFER_TARGET;
+});
+
+describe('the set-size dial', () => {
+  it('defaults to 3 and is raisable up to the per-call ceiling', () => {
+    expect(bufferTarget()).toBe(3);
+
+    process.env.GYM_BUFFER_TARGET = '8';
+    expect(bufferTarget()).toBe(8);
+
+    // Past the ceiling the later items in a set get less attention, and a truncated
+    // response loses the whole thing.
+    process.env.GYM_BUFFER_TARGET = '50';
+    expect(bufferTarget()).toBe(MAX_ITEMS_PER_CALL);
+
+    for (const bad of ['0', '-1', 'lots', '']) {
+      process.env.GYM_BUFFER_TARGET = bad;
+      expect(bufferTarget()).toBe(3);
+    }
+  });
+
+  it('writes a raised target in a single call', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    await topUpBuffer(db, conceptId, {
+      priorityCellIds: [cell.id],
+      target: 8,
+      maxGenerations: 8,
+      concurrency: 1,
+    });
+
+    expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(1);
+    expect(handle.calls.filter((c) => c.kind === 'validate')).toHaveLength(8);
+
+    const stored = db
+      .prepare(`SELECT COUNT(*) AS n FROM items WHERE cell_id = ? AND validated = 1`)
+      .get(cell.id) as { n: number };
+    expect(stored.n).toBe(8);
+  });
+
+  it('never splits one cell across two calls to fit a tick budget', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    // Budget smaller than the target: the cell still goes in one call, because
+    // clipping it would turn one cheap call into two expensive ones.
+    await topUpBuffer(db, conceptId, {
+      priorityCellIds: [cell.id],
+      target: 6,
+      maxGenerations: 2,
+      concurrency: 1,
+    });
+
+    const gens = handle.calls.filter((c) => c.kind === 'item-mc');
+    expect(gens).toHaveLength(1);
+    const asked = /<how_many>(\d+)<\/how_many>/.exec(
+      String((gens[0].request.messages as { content: string }[])[0].content)
+    )?.[1];
+    expect(asked).toBe('6');
+  });
+});
+
+describe('failure reporting', () => {
+  it('names the reasons rather than just the attempt count', () => {
+    const msg = summarizeFailure(3, [
+      { reasons: ['validator chose option 2, key is option 4'] },
+      { reasons: ['validator chose option 1, key is option 3'] },
+      { reasons: ['flag: ambiguous'] },
+    ]);
+
+    // Position numbers are collapsed, so the same complaint counts as one thing
+    // seen twice — that distinguishes a badly drawn node from an unlucky run.
+    expect(msg).toContain('x2');
+    expect(msg).toContain('key is option N');
+    expect(msg).toContain('flag: ambiguous');
+    expect(msg).toContain('3 attempts');
+  });
+
+  it('says so plainly when nothing was recorded', () => {
+    expect(summarizeFailure(3, [])).toMatch(/no recorded reason/);
+  });
+
+  it('surfaces through the outcome when every candidate is rejected', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(1);
+    // A validator that always disagrees with the key rejects everything.
+    const { handler } = makeFakeLlm({ validatorPicks: 'wrong' });
+    setTransport(handler);
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    const outcome = await generateItemsForCell(db, cell.id, 2);
+    expect(outcome.items).toHaveLength(0);
+    // The message a user actually sees must name the cause.
+    expect(outcome.error).toMatch(/key is option N/);
+    expect(outcome.error).not.toBe('generation failed after 3 attempts');
+  });
 });
 
 describe('the concurrency dial', () => {

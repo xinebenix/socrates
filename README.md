@@ -30,7 +30,7 @@ npm run worker                    # in a second terminal — keeps the item buff
 | `GYM_MODEL` | `claude-opus-5` | what a strategy means by "the strong model" |
 | `GYM_MODEL_ITEM` · `_BLUEPRINT` · `_VALIDATE` · `_GRADE` | — | override one call site, beating the strategy |
 | `GYM_DB` | `./data/gym.db` | |
-| `GYM_BUFFER_TARGET` | `3` | validated, unserved items kept ready per plausibly-due cell |
+| `GYM_BUFFER_TARGET` | `3` | items kept ready per cell, and the size of one generation set (max 10) |
 | `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12 |
 | `GYM_LOOKAHEAD_CELLS` | `12` | cells the worker pre-generates for — the main cost dial |
 | `GYM_MONTHLY_BUDGET_USD` | — | pauses pre-generation past this estimate; sessions keep running |
@@ -46,7 +46,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 154 tests, no network
+npm test          # 160 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -278,7 +278,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 154 tests, no network, ~1.9s
+npm test                 # 160 tests, no network, ~1.9s
 npm run test:grader      # the grader regression set against the live model
 ```
 

@@ -230,7 +230,10 @@ export async function generateMcItems(
   }
 
   if (accepted.length === 0) {
-    const error = `generation failed after ${attempts} attempts`;
+    // The reasons go into the message, not just the log. "Generation failed after 3
+    // attempts" is a sentence that sends someone to read source code; "the validator
+    // chose a different option than the key, twice" is one they can act on.
+    const error = summarizeFailure(attempts, rejections);
     logEvent(db, 'warn', 'generate.mc_failed', {
       cellId,
       node: ctx.node.title,
@@ -323,6 +326,7 @@ export async function generateFreeItem(db: Db, cellId: number): Promise<Generati
   if (!ctx) return fail('cell not found');
 
   const previous = recentStems(db, cellId, RECENT_STEMS_FREE);
+  const rejections: GenerationOutcome['rejections'] = [];
 
   for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
     const generated = await structured<FreeItemOut>(
@@ -340,8 +344,20 @@ export async function generateFreeItem(db: Db, cellId: number): Promise<Generati
     );
     const gen: FreeItemOut = generated.data;
 
-    if (tooSimilar(gen.stem, previous)) continue;
-    if (gen.rubric.length < 4) continue;
+    if (tooSimilar(gen.stem, previous)) {
+      rejections.push({
+        reasons: ['stem too similar to a recent item'],
+        verdict: emptyVerdict(),
+      });
+      continue;
+    }
+    if (gen.rubric.length < 4) {
+      rejections.push({
+        reasons: [`rubric had ${gen.rubric.length} criteria, needs at least 4`],
+        verdict: emptyVerdict(),
+      });
+      continue;
+    }
 
     const info = db
       .prepare(
@@ -362,11 +378,17 @@ export async function generateFreeItem(db: Db, cellId: number): Promise<Generati
     return { item, attempts: attempt, rejections: [], error: null };
   }
 
+  logEvent(db, 'warn', 'generate.free_failed', {
+    cellId,
+    node: ctx.node.title,
+    reasons: rejections.flatMap((r) => r.reasons),
+  });
+
   return {
     item: null,
     attempts: MAX_GENERATION_ATTEMPTS,
-    rejections: [],
-    error: 'free-response generation failed',
+    rejections,
+    error: `free-response ${summarizeFailure(MAX_GENERATION_ATTEMPTS, rejections)}`,
   };
 }
 
@@ -416,6 +438,39 @@ export function cellGenerationContext(
     excerpt: ctx.excerpt,
     depth: ctx.cell.depth,
   };
+}
+
+/**
+ * Turn a pile of rejection reasons into one sentence someone can act on.
+ *
+ * Counts repeats rather than listing them, because three attempts producing the same
+ * complaint means something different from three different complaints: the first is a
+ * badly drawn node, the second is an unlucky run.
+ */
+export function summarizeFailure(
+  attempts: number,
+  rejections: { reasons: string[] }[]
+): string {
+  const counts = new Map<string, number>();
+  for (const r of rejections) {
+    for (const reason of r.reasons) {
+      // Collapse the position numbers so "chose option 2, key is option 4" and
+      // "chose option 1, key is option 3" count as the same complaint.
+      const key = reason.replace(/\boption \d\b/g, 'option N');
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+
+  if (counts.size === 0) {
+    return `generation produced nothing usable after ${attempts} attempts, with no recorded reason — check ops.recentErrors`;
+  }
+
+  const parts = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, n]) => (n > 1 ? `${reason} (x${n})` : reason));
+
+  return `${attempts} attempts, all rejected: ${parts.join('; ')}`;
 }
 
 /* ------------------------------------------------------------------ shared */

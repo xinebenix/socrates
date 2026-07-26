@@ -126,8 +126,16 @@ Set \`misconception_label\` to null on the correct option and only on the correc
 
 Return \`items\` with exactly as many items as \`how_many\` asks for.`;
 
-/** How many items one generation call may be asked for. */
-export const MAX_ITEMS_PER_CALL = 6;
+/**
+ * How many items one generation call may be asked for.
+ *
+ * The ceiling is real but soft. Amortization keeps improving with count — the shared
+ * reasoning is divided by more items — but two things degrade past roughly eight:
+ * the later items in a long set get less attention than the early ones, and the
+ * whole set is lost if the response is truncated. Ten is the point past which the
+ * saving is not worth either risk.
+ */
+export const MAX_ITEMS_PER_CALL = 10;
 
 export function buildMcItemCall(input: McItemInput): StructuredCall {
   const d = depth(input.depthLevel);
@@ -165,7 +173,8 @@ export function buildMcItemCall(input: McItemInput): StructuredCall {
       deadNote,
     schema: MC_ITEM_SET_SCHEMA,
     // The item bodies scale with the count; the reasoning ahead of them does not.
-    maxTokens: 6000 + 3000 * count,
+    // Generous per item, because a truncated response loses the whole set.
+    maxTokens: Math.min(6000 + 3500 * count, 64000),
     effort: effortFor('item'),
     model: modelFor('item', input.depthLevel),
   };

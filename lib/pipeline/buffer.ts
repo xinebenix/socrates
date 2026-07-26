@@ -19,11 +19,22 @@
 import type { Db } from '../db';
 import { countBufferedItems } from '../db/queries';
 import { plausiblyDueCells } from '../stats';
+import { MAX_ITEMS_PER_CALL } from '../prompts/itemMc';
 import { generateItemsForCell } from './generateItem';
 
+/**
+ * Validated, unserved items kept ready per plausibly-due cell — and, because a cell's
+ * whole shortfall goes into one call, also the size of a generation set.
+ *
+ * Raising this is the one dial that makes items *cheaper* per item as it goes up: the
+ * reasoning about the cell is divided across more of them. What it costs is money
+ * committed earlier (see GYM_LOOKAHEAD_CELLS) and a longer wait for the first fill.
+ * Capped at MAX_ITEMS_PER_CALL, past which set quality starts to slip.
+ */
 export function bufferTarget(): number {
   const raw = Number(process.env.GYM_BUFFER_TARGET);
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 3;
+  if (!Number.isFinite(raw) || raw <= 0) return 3;
+  return Math.min(Math.floor(raw), MAX_ITEMS_PER_CALL);
 }
 
 /**
@@ -84,9 +95,12 @@ export function computeShortfalls(
       skipped++;
       continue;
     }
-    const want = Math.min(opts.target - have, opts.maxGenerations - budgeted);
-    short.push({ cellId, want });
-    budgeted += want;
+    // A cell's shortfall is never clipped to fit the remaining tick budget. Clipping
+    // would split one cheap call into two expensive ones across two ticks and lose
+    // the amortization the set generation exists for — the budget is a ceiling on
+    // how much a tick starts, not a scalpel on individual cells.
+    short.push({ cellId, want: opts.target - have });
+    budgeted += opts.target - have;
   }
 
   return { short, skipped };
@@ -130,7 +144,9 @@ export async function topUpBuffer(
   } = {}
 ): Promise<TopUpReport> {
   const target = opts.target ?? bufferTarget();
-  const maxGenerations = opts.maxGenerations ?? 6;
+  // Two cells' worth by default, so a raised target does not turn every top-up into
+  // a single-cell fill.
+  const maxGenerations = opts.maxGenerations ?? Math.max(6, target * 2);
   const report: TopUpReport = { generated: 0, failed: 0, skipped: 0 };
 
   const due = plausiblyDueCells(db, conceptId, lookaheadCells()).map((c) => c.cellId);
@@ -169,7 +185,10 @@ export async function topUpBuffer(
  * never take down the answer path.
  */
 export function topUpInBackground(db: Db, conceptId: number, priorityCellIds?: number[]): void {
-  void topUpBuffer(db, conceptId, { maxGenerations: 4, priorityCellIds }).catch(() => {});
+  void topUpBuffer(db, conceptId, {
+    maxGenerations: Math.max(4, bufferTarget()),
+    priorityCellIds,
+  }).catch(() => {});
 }
 
 /**
@@ -183,6 +202,10 @@ export function warmSessionPlan(db: Db, conceptId: number, cellIds: number[]): v
   const unique = [...new Set(cellIds)];
   void topUpBuffer(db, conceptId, {
     priorityCellIds: unique,
-    maxGenerations: Math.min(unique.length, 8),
+    // One item for each planned cell is what this session actually needs; the worker
+    // deepens them afterwards. Filling to the full target here would delay the first
+    // item to buy items for a session that has not started.
+    target: 1,
+    maxGenerations: Math.min(unique.length, 10),
   }).catch(() => {});
 }

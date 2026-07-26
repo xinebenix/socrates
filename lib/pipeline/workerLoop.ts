@@ -53,11 +53,18 @@ export function workerIntervalMs(): number {
 }
 
 /**
- * Per concept, per tick. Raised from 4 once generation stopped being serial: the
- * old ceiling was four items an hour on a cold buffer, which a single session
- * consumed in its first four slots.
+ * Items a tick will start per concept.
+ *
+ * Scaled to the buffer target rather than fixed, because a cell's whole shortfall
+ * goes into one call now: at a target of 8, a fixed budget of 8 would spend the
+ * entire tick on one cell and starve the rest of the concept. Four cells' worth is
+ * the floor at any target.
  */
-export async function tick(maxGenerationsPerConcept = 8): Promise<void> {
+export function tickBudget(): number {
+  return Math.max(8, bufferTarget() * 4);
+}
+
+export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<void> {
   const started = Date.now();
   const db = getDb();
 
