@@ -51,6 +51,35 @@ export function bufferConcurrency(): number {
 }
 
 /**
+ * The remaining-item count at or below which a cell is refilled — and refilled all
+ * the way back to the target, in one call.
+ *
+ * Without this, "short" meant `have < target`, so serving a single item from a
+ * ten-deep cell triggered a call for exactly one item. That is the most expensive
+ * shape a generation can take: the reasoning about the cell gets paid in full and
+ * amortized across nothing. Sets made the first fill cheap and left every refill
+ * afterwards at the old price.
+ *
+ * So the buffer has hysteresis. It drains to the low-water mark, then refills in one
+ * call. Deeper buffer, fewer calls, cheaper items — the same trade as any batch.
+ *
+ * The default is 40% of the target, so a cell of 10 refills once 6 have been used.
+ * There is no risk of running dry in the gap: invariant 7 forbids two consecutive
+ * items from the same node, so a single cell drains at most every other item, and
+ * the remaining 4 cover far more of the session than a refill takes.
+ *
+ * GYM_BUFFER_REFILL_AT sets it as an absolute count. 0 means refill only when the
+ * cell is empty — maximum amortization, no slack.
+ */
+export function refillThreshold(target = bufferTarget()): number {
+  const raw = Number(process.env.GYM_BUFFER_REFILL_AT);
+  const chosen =
+    Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : Math.max(1, Math.ceil(target * 0.4));
+  // Never at or above the target: a cell holding its full target is not short.
+  return Math.min(chosen, Math.max(0, target - 1));
+}
+
+/**
  * How many cells ahead of the session runner the worker looks.
  *
  * This is the cost dial nobody thinks to look at. At 24 cells and a target of 3, the
@@ -81,9 +110,16 @@ export interface TopUpReport {
 export function computeShortfalls(
   db: Db,
   orderedCellIds: number[],
-  opts: { target: number; maxGenerations: number; exclude?: Set<number> }
+  opts: {
+    target: number;
+    maxGenerations: number;
+    exclude?: Set<number>;
+    /** Refill only once a cell has drained to this many items. See refillThreshold. */
+    refillAt?: number;
+  }
 ): { short: { cellId: number; want: number }[]; skipped: number } {
   const short: { cellId: number; want: number }[] = [];
+  const refillAt = opts.refillAt ?? refillThreshold(opts.target);
   let skipped = 0;
   let budgeted = 0;
 
@@ -91,16 +127,28 @@ export function computeShortfalls(
     if (budgeted >= opts.maxGenerations) break;
     if (opts.exclude?.has(cellId)) continue;
     const have = countBufferedItems(db, cellId, 'mc');
-    if (have >= opts.target) {
+
+    // Hysteresis: a partly-drained cell is left alone until it reaches the low-water
+    // mark, then refilled to the target in a single call. Topping up by one after
+    // every served item would pay the cell's reasoning cost per item and undo the
+    // whole point of generating sets.
+    if (have > refillAt) {
       skipped++;
       continue;
     }
+
+    const want = opts.target - have;
+    if (want <= 0) {
+      skipped++;
+      continue;
+    }
+
     // A cell's shortfall is never clipped to fit the remaining tick budget. Clipping
     // would split one cheap call into two expensive ones across two ticks and lose
     // the amortization the set generation exists for — the budget is a ceiling on
     // how much a tick starts, not a scalpel on individual cells.
-    short.push({ cellId, want: opts.target - have });
-    budgeted += opts.target - have;
+    short.push({ cellId, want });
+    budgeted += want;
   }
 
   return { short, skipped };
@@ -117,6 +165,7 @@ export function dueShortfalls(
     target: bufferTarget(),
     maxGenerations: opts.maxGenerations,
     exclude: opts.exclude,
+    refillAt: refillThreshold(),
   }).short;
 }
 

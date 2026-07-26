@@ -284,6 +284,7 @@ not the dial.
 | `GYM_EFFORT_VALIDATE` | `high` | **leave it.** A weaker validator rejects sound items, and each rejection costs two more calls — lowering this can make generation slower as well as worse |
 | `GYM_EFFORT_GRADE` | `high` | leave it. Invariant 9: charitable grading turns a failed retrieval into a passed one |
 | `GYM_BUFFER_TARGET` | `3` | items per cell **and per generation call**, max 10. Raising it lowers cost *per item* — the shared reasoning divides further — at the price of committing money earlier and a slower first fill |
+| `GYM_BUFFER_REFILL_AT` | 40% of target | remaining items at which a cell refills, all the way to the target in one call. `0` refills only when a cell runs dry: maximum amortization, no slack |
 | `GYM_WORKER_INTERVAL_MS` | `60000` | how often the background fill runs |
 
 If you want one change: raise `GYM_BUFFER_CONCURRENCY` to `8`. It costs no quality at
@@ -414,6 +415,18 @@ paying for it once per item was the largest avoidable cost in the system. A cell
 shortfall now goes into one call. At four items that is roughly **half the output tokens
 per item**, and it makes the items better: the prompt can require that they differ from
 each other, which is a stronger guarantee than generating four independently and hoping.
+
+**The buffer has hysteresis, and it has to.** A cell is not refilled the moment it
+drops below target — it drains to a low-water mark (40% of the target by default),
+then refills to full in one call. Without that, "short" meant `have < target`, so
+serving one item from a ten-deep cell triggered a call for exactly *one* item: the
+reasoning about the cell paid in full and amortized across nothing. Sets made the
+first fill cheap and left every refill afterwards at the old price. Deeper buffer,
+fewer calls, cheaper items — the same trade as any batch.
+
+There is no risk of running dry in the gap, and the reason is invariant 7: no two
+consecutive items may come from the same node, so a single cell drains at most every
+other item. Four remaining items cover far more of a session than a refill takes.
 
 **Validation deliberately does not amortize.** Each item still gets its own blind solve
 from a call that has seen no other item and no key. That is invariant 3, and it is what

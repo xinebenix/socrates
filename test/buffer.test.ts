@@ -12,7 +12,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { makeFakeLlm } from './fakeLlm';
 import { makeFixture } from './helpers';
 import { setTransport } from '../lib/llm/client';
-import { bufferConcurrency, bufferTarget, topUpBuffer } from '../lib/pipeline/buffer';
+import {
+  bufferConcurrency,
+  bufferTarget,
+  refillThreshold,
+  topUpBuffer,
+} from '../lib/pipeline/buffer';
 import { generateItemsForCell, summarizeFailure } from '../lib/pipeline/generateItem';
 import { MAX_ITEMS_PER_CALL } from '../lib/prompts/itemMc';
 import { listCells } from '../lib/db/queries';
@@ -21,6 +26,7 @@ afterEach(() => {
   setTransport(null);
   delete process.env.GYM_BUFFER_CONCURRENCY;
   delete process.env.GYM_BUFFER_TARGET;
+  delete process.env.GYM_BUFFER_REFILL_AT;
 });
 
 describe('the set-size dial', () => {
@@ -90,6 +96,103 @@ describe('the set-size dial', () => {
       String((gens[0].request.messages as { content: string }[])[0].content)
     )?.[1];
     expect(asked).toBe('6');
+  });
+});
+
+describe('the low-water mark', () => {
+  it('defaults to 40% of the target, and never reaches it', () => {
+    // A cell of 10 refills once 6 have been used.
+    expect(refillThreshold(10)).toBe(4);
+    expect(refillThreshold(8)).toBe(4);
+    expect(refillThreshold(3)).toBe(2);
+    // A target of 1 can hold no slack: refill only when empty.
+    expect(refillThreshold(1)).toBe(0);
+  });
+
+  it('takes an absolute override, clamped below the target', () => {
+    process.env.GYM_BUFFER_REFILL_AT = '2';
+    expect(refillThreshold(10)).toBe(2);
+
+    // 0 is meaningful: refill only when the cell runs dry.
+    process.env.GYM_BUFFER_REFILL_AT = '0';
+    expect(refillThreshold(10)).toBe(0);
+
+    // A value at or above the target would mean "always short".
+    process.env.GYM_BUFFER_REFILL_AT = '99';
+    expect(refillThreshold(10)).toBe(9);
+  });
+
+  it('leaves a partly-drained cell alone, then refills it in one call', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+    const fill = () =>
+      topUpBuffer(db, conceptId, {
+        priorityCellIds: [cell.id],
+        target: 10,
+        maxGenerations: 10,
+        concurrency: 1,
+      });
+    const genCalls = () => handle.calls.filter((c) => c.kind === 'item-mc').length;
+    const serve = (n: number) =>
+      db
+        .prepare(
+          `UPDATE items SET served_count = 1 WHERE id IN (
+             SELECT id FROM items WHERE cell_id = ? AND served_count = 0 LIMIT ?)`
+        )
+        .run(cell.id, n);
+
+    await fill();
+    expect(genCalls()).toBe(1);
+
+    // Five served leaves 5 remaining, above the mark of 4 — no call at all. This is
+    // the regression that matters: without hysteresis each of these was a 1-item
+    // call, paying the cell's reasoning cost five times over.
+    serve(5);
+    await fill();
+    expect(genCalls()).toBe(1);
+
+    // The sixth takes it to 4, at the mark: one call, back to the full target.
+    serve(1);
+    await fill();
+    expect(genCalls()).toBe(2);
+
+    const asked = /<how_many>(\d+)<\/how_many>/.exec(
+      String(
+        (handle.calls.filter((c) => c.kind === 'item-mc')[1].request.messages as {
+          content: string;
+        }[])[0].content
+      )
+    )?.[1];
+    expect(asked).toBe('6');
+
+    const ready = db
+      .prepare(`SELECT COUNT(*) AS n FROM items WHERE cell_id = ? AND served_count = 0`)
+      .get(cell.id) as { n: number };
+    expect(ready.n).toBe(10);
+  });
+
+  it('refills an empty cell regardless of the mark', async () => {
+    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { handle, handler } = makeFakeLlm();
+    setTransport(handler);
+
+    const cell = listCells(db, conceptId).find(
+      (c) => c.node_id === nodeIds[0] && c.depth === 1
+    )!;
+
+    process.env.GYM_BUFFER_REFILL_AT = '0';
+    await topUpBuffer(db, conceptId, {
+      priorityCellIds: [cell.id],
+      target: 5,
+      maxGenerations: 5,
+      concurrency: 1,
+    });
+    expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(1);
   });
 });
 

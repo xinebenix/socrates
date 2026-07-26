@@ -6,7 +6,7 @@ import { authConfig, healthTokenMatches, SESSION_COOKIE, verifySession } from '@
 import { opsCounts, recentOps } from '@/lib/ops';
 import { workerStatus } from '@/lib/pipeline/workerLoop';
 import { STRONG_FROM_DEPTH, effortFor, model, modelFor, strategyName } from '@/lib/llm/client';
-import { bufferConcurrency, bufferTarget } from '@/lib/pipeline/buffer';
+import { bufferConcurrency, bufferTarget, refillThreshold } from '@/lib/pipeline/buffer';
 import { listConcepts } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
 import { batchingEnabled } from '@/lib/llm/batch';
@@ -127,6 +127,10 @@ export async function GET(req: Request) {
         grade: effortFor('grade'),
       },
       bufferConcurrency: bufferConcurrency(),
+      // Set size and the point at which a cell refills. Together these decide how
+      // much amortization the generation calls actually get.
+      setSize: bufferTarget(),
+      refillAt: refillThreshold(),
       item: timingSummary(db, 'generate.timing'),
       blueprint: timingSummary(db, 'blueprint.generated'),
     };

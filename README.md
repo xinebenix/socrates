@@ -31,6 +31,7 @@ npm run worker                    # in a second terminal — keeps the item buff
 | `GYM_MODEL_ITEM` · `_BLUEPRINT` · `_VALIDATE` · `_GRADE` | — | override one call site, beating the strategy |
 | `GYM_DB` | `./data/gym.db` | |
 | `GYM_BUFFER_TARGET` | `3` | items kept ready per cell, and the size of one generation set (max 10) |
+| `GYM_BUFFER_REFILL_AT` | 40% of target | remaining items at which a cell refills to full |
 | `GYM_BUFFER_CONCURRENCY` | `4` | items generated at once, capped at 12 |
 | `GYM_LOOKAHEAD_CELLS` | `12` | cells the worker pre-generates for — the main cost dial |
 | `GYM_MONTHLY_BUDGET_USD` | — | pauses pre-generation past this estimate; sessions keep running |
@@ -46,7 +47,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 160 tests, no network
+npm test          # 164 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -172,6 +173,12 @@ the Message Batches API — a 50% discount in exchange for asynchronous results,
 is free money for a buffer since nobody is waiting on it. The pipeline persists in
 the database and survives restarts; sessions themselves never wait on a batch.
 
+**The buffer drains to a low-water mark before refilling.** A cell is not topped up
+the moment it drops below target — it drains to 40% of it, then refills to full in one
+call. Refilling by one after every served item would pay the cell's reasoning cost per
+item and undo the whole point of generating sets. Invariant 7 is what makes the gap
+safe: no two consecutive items share a node, so a cell drains at most every other item.
+
 **Items are generated in sets, one call per cell.** Nearly all of a generation's output
 is reasoning about the *cell* — what the node means, what a learner gets wrong, which
 distractors are live — and that work is identical for every item on it. A cell's whole
@@ -278,7 +285,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 160 tests, no network, ~1.9s
+npm test                 # 164 tests, no network, ~1.9s
 npm run test:grader      # the grader regression set against the live model
 ```
 
