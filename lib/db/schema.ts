@@ -147,8 +147,23 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   input_tokens   INTEGER NOT NULL DEFAULT 0,
   output_tokens  INTEGER NOT NULL DEFAULT 0,
   cached_tokens  INTEGER NOT NULL DEFAULT 0,
-  ms             INTEGER NOT NULL DEFAULT 0
+  ms             INTEGER NOT NULL DEFAULT 0,
+  batch          INTEGER NOT NULL DEFAULT 0   -- 1 = went through the Batch API, billed at half
 );
+
+-- In-flight Message Batches for the speculative pipeline. Persisted so a batch
+-- survives a restart or redeploy: the provider keeps working while we are down, and
+-- the next worker tick picks the results up by id.
+CREATE TABLE IF NOT EXISTS gen_batches (
+  id                 INTEGER PRIMARY KEY,
+  provider_batch_id  TEXT NOT NULL,
+  phase              TEXT NOT NULL,       -- 'generate' | 'validate'
+  payload            TEXT NOT NULL,       -- JSON context needed to resume on retrieval
+  created_at         TEXT NOT NULL,
+  completed_at       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_gen_batches_open ON gen_batches(phase) WHERE completed_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_llm_usage_day ON llm_usage(day);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_at ON llm_usage(at DESC);

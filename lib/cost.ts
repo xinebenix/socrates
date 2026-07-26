@@ -74,18 +74,22 @@ export function priceFor(model: string): Price {
   return prices()[model] ?? UNKNOWN_PRICE;
 }
 
+/** The Message Batches API bills every token at half the synchronous rate. */
+export const BATCH_DISCOUNT = 0.5;
+
 export function estimateUsd(
   model: string,
   inputTokens: number,
   outputTokens: number,
-  cachedTokens = 0
+  cachedTokens = 0,
+  batch = false
 ): number {
   const p = priceFor(model);
   // Cached reads are billed at the cache rate and are not also billed as fresh input.
   const freshInput = Math.max(0, inputTokens - cachedTokens);
-  return (
-    (freshInput * p.input + outputTokens * p.output + cachedTokens * p.cachedInput) / 1_000_000
-  );
+  const usd =
+    (freshInput * p.input + outputTokens * p.output + cachedTokens * p.cachedInput) / 1_000_000;
+  return batch ? usd * BATCH_DISCOUNT : usd;
 }
 
 /** blueprint | item | validate | grade, derived from the call name. */
@@ -104,12 +108,14 @@ export function recordUsage(
     model: string;
     usage: { inputTokens: number; outputTokens: number; cachedTokens: number };
     ms: number;
+    /** True when the call went through the Batch API and is billed at half rate. */
+    batch?: boolean;
   }
 ): void {
   const at = iso(now());
   db.prepare(
-    `INSERT INTO llm_usage (at, day, call_site, kind, model, input_tokens, output_tokens, cached_tokens, ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO llm_usage (at, day, call_site, kind, model, input_tokens, output_tokens, cached_tokens, ms, batch)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     at,
     at.slice(0, 10),
@@ -119,7 +125,8 @@ export function recordUsage(
     record.usage.inputTokens,
     record.usage.outputTokens,
     record.usage.cachedTokens,
-    Math.round(record.ms)
+    Math.round(record.ms),
+    record.batch ? 1 : 0
   );
 }
 
@@ -135,6 +142,7 @@ function rollUp(
   rows: {
     key: string;
     model: string;
+    batch: number;
     calls: number;
     input_tokens: number;
     output_tokens: number;
@@ -153,12 +161,14 @@ function rollUp(
     existing.calls += r.calls;
     existing.inputTokens += r.input_tokens;
     existing.outputTokens += r.output_tokens;
-    // Priced per model before rolling up, because one key spans several models.
+    // Priced per model and per billing mode before rolling up, because one key can
+    // span several models and mix batch with synchronous calls.
     existing.estimatedUsd += estimateUsd(
       r.model,
       r.input_tokens,
       r.output_tokens,
-      r.cached_tokens
+      r.cached_tokens,
+      r.batch === 1
     );
     byKey.set(r.key, existing);
   }
@@ -176,13 +186,13 @@ export function spendBy(
   const where = sinceDay ? `WHERE day >= ?` : '';
   const rows = db
     .prepare(
-      `SELECT ${column} AS key, model,
+      `SELECT ${column} AS key, model, batch,
               COUNT(*) AS calls,
               SUM(input_tokens) AS input_tokens,
               SUM(output_tokens) AS output_tokens,
               SUM(cached_tokens) AS cached_tokens
          FROM llm_usage ${where}
-        GROUP BY ${column}, model`
+        GROUP BY ${column}, model, batch`
     )
     .all(...(sinceDay ? [sinceDay] : [])) as Parameters<typeof rollUp>[0];
   return rollUp(rows);

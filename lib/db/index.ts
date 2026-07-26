@@ -27,6 +27,13 @@ export function openDb(file: string): Db {
 
 export function migrate(db: Db): void {
   db.exec(SCHEMA_SQL);
+
+  // Additive migrations for databases created before a column existed. CREATE TABLE
+  // IF NOT EXISTS does nothing for an existing table, so new columns need an ALTER.
+  const usageCols = db.pragma(`table_info('llm_usage')`) as { name: string }[];
+  if (!usageCols.some((c) => c.name === 'batch')) {
+    db.exec(`ALTER TABLE llm_usage ADD COLUMN batch INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 /** The process-wide handle used by API routes and the worker. */

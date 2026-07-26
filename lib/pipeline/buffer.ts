@@ -63,6 +63,50 @@ export interface TopUpReport {
 }
 
 /**
+ * Which of these cells are short of the target, and by how much. Shared by the
+ * synchronous fill and the batch pipeline so the two can never disagree about what
+ * "short" means.
+ */
+export function computeShortfalls(
+  db: Db,
+  orderedCellIds: number[],
+  opts: { target: number; maxGenerations: number; exclude?: Set<number> }
+): { short: { cellId: number; want: number }[]; skipped: number } {
+  const short: { cellId: number; want: number }[] = [];
+  let skipped = 0;
+  let budgeted = 0;
+
+  for (const cellId of orderedCellIds) {
+    if (budgeted >= opts.maxGenerations) break;
+    if (opts.exclude?.has(cellId)) continue;
+    const have = countBufferedItems(db, cellId, 'mc');
+    if (have >= opts.target) {
+      skipped++;
+      continue;
+    }
+    const want = Math.min(opts.target - have, opts.maxGenerations - budgeted);
+    short.push({ cellId, want });
+    budgeted += want;
+  }
+
+  return { short, skipped };
+}
+
+/** The worker's view: every plausibly-due cell that is short, minus what is in flight. */
+export function dueShortfalls(
+  db: Db,
+  conceptId: number,
+  opts: { maxGenerations: number; exclude?: Set<number> }
+): { cellId: number; want: number }[] {
+  const due = plausiblyDueCells(db, conceptId, lookaheadCells()).map((c) => c.cellId);
+  return computeShortfalls(db, due, {
+    target: bufferTarget(),
+    maxGenerations: opts.maxGenerations,
+    exclude: opts.exclude,
+  }).short;
+}
+
+/**
  * Run tasks with a fixed number in flight. Each task records its own outcome, so one
  * failure cannot abort the rest of the batch.
  */
@@ -100,19 +144,8 @@ export async function topUpBuffer(
   // A cell's whole shortfall goes into ONE call. The reasoning a generation does before
   // writing an item is about the cell, not the item, so filling a cell three-deep in
   // one call costs far less than three calls — see generateMcItems.
-  const short: { cellId: number; want: number }[] = [];
-  let budgeted = 0;
-  for (const cellId of ordered) {
-    if (budgeted >= maxGenerations) break;
-    const have = countBufferedItems(db, cellId, 'mc');
-    if (have >= target) {
-      report.skipped++;
-      continue;
-    }
-    const want = Math.min(target - have, maxGenerations - budgeted);
-    short.push({ cellId, want });
-    budgeted += want;
-  }
+  const { short, skipped } = computeShortfalls(db, ordered, { target, maxGenerations });
+  report.skipped += skipped;
 
   await pooled(
     short.map(({ cellId, want }) => async () => {

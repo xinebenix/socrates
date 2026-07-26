@@ -219,10 +219,19 @@ const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
  *   GYM_EFFORT_VALIDATE   default high
  *   GYM_EFFORT_GRADE      default high
  */
-export function effortFor(kind: 'item' | 'blueprint' | 'validate' | 'grade'): Effort {
+export function effortFor(
+  kind: 'item' | 'blueprint' | 'validate' | 'grade',
+  depth?: number
+): Effort {
   const env = process.env[`GYM_EFFORT_${kind.toUpperCase()}`]?.trim().toLowerCase();
   if (env && (EFFORTS as string[]).includes(env)) return env as Effort;
-  return kind === 'item' ? 'medium' : 'high';
+  if (kind === 'item') return 'medium';
+  // The validator's output is almost entirely reasoning, so effort is its cost.
+  // Solving a D1-D3 item that already survived the shape checks does not need
+  // extended thinking; catching a subtly-wrong D4-D5 key does. The deep gate keeps
+  // it. GYM_EFFORT_VALIDATE overrides both ends at once.
+  if (kind === 'validate' && depth !== undefined && depth < STRONG_FROM_DEPTH) return 'low';
+  return 'high';
 }
 
 /**

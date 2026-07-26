@@ -59,51 +59,50 @@ interface Levers {
   itemsPerCall: number;
   /** Fraction of the system prompt's input tokens served from cache. */
   cacheHitRate: number;
-  /** Share of generation done ahead of time, which can go through the Batch API. */
+  /** Share of generation done ahead of time, which goes through the Batch API. */
   speculativeShare: number;
-  /** Batch API discount on those calls. 0 = not used. */
+  /** Batch API discount on those calls. 0 = off. */
   batchDiscount: number;
-  /** Validator output tokens. Mostly reasoning, so effort moves this directly. */
-  validateOutput: number;
+  /** Validator output tokens by tier. Mostly reasoning, so effort moves this. */
+  validateOutputShallow: number;
+  validateOutputDeep: number;
   /** Items generated per item served — buffer overshoot plus rejections. */
   generationMultiplier: number;
 }
 
-const CURRENT: Levers = {
-  itemsPerCall: 3,
-  cacheHitRate: 0.9,
-  speculativeShare: 0,
-  batchDiscount: 0,
-  validateOutput: 2_500,
-  generationMultiplier: 1.4,
-};
-
+/** The world before any of this work: one call per item, everything synchronous. */
 const BEFORE: Levers = {
   itemsPerCall: 1,
   cacheHitRate: 0,
   speculativeShare: 0,
   batchDiscount: 0,
-  validateOutput: 2_500,
+  validateOutputShallow: 2_500,
+  validateOutputDeep: 2_500,
   generationMultiplier: 1.4,
 };
 
-/** Everything that ships today, tuned as far as the env vars allow. */
-const TUNED: Levers = {
-  itemsPerCall: 4,
+/**
+ * The shipped defaults today: set generation, prompt caching, the worker's fills
+ * through the Batch API, low-effort validation at the shallow depths.
+ */
+const CURRENT: Levers = {
+  itemsPerCall: 3,
   cacheHitRate: 0.9,
-  speculativeShare: 0,
-  batchDiscount: 0,
-  validateOutput: 900,
-  generationMultiplier: 1.15,
+  speculativeShare: 0.8,
+  batchDiscount: 0.5,
+  validateOutputShallow: 900,
+  validateOutputDeep: 2_500,
+  generationMultiplier: 1.4,
 };
 
-/** Everything on the table, including the parts not built yet. */
-const AVAILABLE: Levers = {
+/** The same machinery with the env dials tightened. */
+const TUNED: Levers = {
   itemsPerCall: 4,
   cacheHitRate: 0.9,
   speculativeShare: 0.8,
   batchDiscount: 0.5,
-  validateOutput: 900,
+  validateOutputShallow: 900,
+  validateOutputDeep: 2_500,
   generationMultiplier: 1.15,
 };
 
@@ -229,11 +228,12 @@ function itemCost(
 
   const gen = estimateUsd(genModel, genInputPerItem, genOutputPerItem, cachedIn);
 
-  // Validation amortizes nothing: one blind solve per item, by design.
+  // Validation amortizes nothing: one blind solve per item, by design. Effort is
+  // depth-aware — shallow items do not need extended thinking to solve.
   const val = estimateUsd(
     validateModel,
     profiles.validate.input,
-    lv.validateOutput,
+    tier === 'itemShallow' ? lv.validateOutputShallow : lv.validateOutputDeep,
     profiles.validate.input * lv.cacheHitRate
   );
 
@@ -444,8 +444,8 @@ async function main(): Promise<void> {
     ['items per call 1 -> 3', { itemsPerCall: 3 }, 'BUILT — shared reasoning paid once'],
     ['items per call 1 -> 4', { itemsPerCall: 4 }, 'BUILT — set GYM_BUFFER_TARGET=4'],
     ['prompt caching', { cacheHitRate: 0.9 }, 'BUILT — input is only ~10% of the bill'],
-    ['validator effort high -> low', { validateOutput: 900 }, 'GYM_EFFORT_VALIDATE=low'],
-    ['batch API on speculative', { speculativeShare: 0.8, batchDiscount: 0.5 }, 'NOT BUILT — 50% off'],
+    ['shallow validation at low effort', { validateOutputShallow: 900 }, 'BUILT — deep gate stays high'],
+    ['batch API on speculative', { speculativeShare: 0.8, batchDiscount: 0.5 }, 'BUILT — 50% off the worker'],
     ['tighter buffer (1.4 -> 1.15)', { generationMultiplier: 1.15 }, 'GYM_LOOKAHEAD_CELLS / TARGET'],
   ];
 
@@ -464,7 +464,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const allLevers = cost(baseline, profiles, AVAILABLE).perMonth;
+  const allLevers = cost(baseline, profiles, TUNED).perMonth;
   console.log('  ' + '-'.repeat(96));
   console.log(
     '  ' +
@@ -483,30 +483,31 @@ async function main(): Promise<void> {
   console.log(
     '  ' +
       pad('strategy', 18) +
+      padLeft('before', 10) +
       padLeft('default', 10) +
       padLeft('tuned', 10) +
-      padLeft('+batch', 10) +
       `    under $${target}?`
   );
   console.log('  ' + '-'.repeat(96));
   for (const s of TABLE) {
+    const before = cost(s, profiles, BEFORE).perMonth;
     const now = cost(s, profiles, CURRENT).perMonth;
     const tuned = cost(s, profiles, TUNED).perMonth;
-    const best = cost(s, profiles, AVAILABLE).perMonth;
-    const verdict = tuned <= target ? 'yes, today' : best <= target ? 'needs batch API' : 'no';
+    const verdict = now <= target ? 'yes, at defaults' : tuned <= target ? 'yes, tuned' : 'no';
     console.log(
       '  ' +
         pad(s.name, 18) +
+        padLeft(usd(before), 10) +
         padLeft(usd(now), 10) +
         padLeft(usd(tuned), 10) +
-        padLeft(usd(best), 10) +
         '    ' +
         verdict
     );
   }
   console.log('');
-  console.log('  tuned  = GYM_BUFFER_TARGET=4 GYM_EFFORT_VALIDATE=low GYM_LOOKAHEAD_CELLS=6');
-  console.log('  +batch = the above, plus routing speculative generation through the Batch API');
+  console.log('  before  = one call per item, no caching, no batching (how it originally worked)');
+  console.log('  default = what ships: sets, caching, Batch API on the worker, low shallow gate');
+  console.log('  tuned   = default + GYM_BUFFER_TARGET=4 GYM_LOOKAHEAD_CELLS=6');
 
   console.log('');
   console.log('  The fixed floor — paid regardless of how many items you answer:');

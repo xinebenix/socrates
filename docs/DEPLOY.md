@@ -429,40 +429,49 @@ What each lever is worth, on `split-gate`, from `npx tsx scripts/cost-model.ts`:
 
 | Lever | $/mo | saves | |
 |---|---|---|---|
-| *(none — one call per item)* | $128 | — | how it used to work |
+| *(none — one call per item)* | $128 | — | how it originally worked |
 | items per call → 4 | $89 | −31% | **built** |
 | prompt caching | $118 | −8% | **built** — input is only ~10% of the bill |
-| validator effort → low | $101 | −21% | `GYM_EFFORT_VALIDATE=low` |
+| shallow validation at low effort | $118 | −8% | **built** — the deep gate stays high |
+| Batch API on the worker's fills | $80 | −38% | **built, on by default** |
 | tighter buffer | $107 | −17% | `GYM_LOOKAHEAD_CELLS` / `GYM_BUFFER_TARGET` |
-| Batch API on speculative | $80 | −38% | **not built** — see below |
-| **all of them** | **$32** | **−75%** | |
+| **all of them** | **$40** | **−69%** | |
 
-**The Batch API is the biggest thing still on the table.** It is 50% off, and the
-pre-generation buffer is asynchronous by definition — nothing about filling a buffer
-needs a synchronous response, so this discount costs no latency anyone can feel. It
-needs submit/poll/retrieve machinery the app does not have yet.
+**The Batch API is built, and on by default.** The worker's speculative fills go
+through Message Batches at half price; results land a tick or two later, which a
+buffer can afford. The pipeline is persisted in the `gen_batches` table, so a batch
+survives a restart — the provider keeps working while the app is down and the next
+tick collects the results. The session's own paths (inline generation, session-start
+warm, grading) stay synchronous: a user waiting on an item is never waiting on a
+batch. `GYM_BATCH=0` turns it off, at double the price. `/api/health` reports open
+batches under `batching`.
+
+**Shallow validation runs at low effort by default.** The validator's output is
+almost entirely reasoning, so effort is its cost. Solving a D1–D3 item that already
+survived the shape checks does not need extended thinking; catching a subtly wrong
+D4–D5 key does, so the deep gate stays at high. `GYM_EFFORT_VALIDATE` overrides both
+ends at once.
 
 ### Reaching $20/month
 
-| `GYM_STRATEGY` | default | tuned | + batch | under $20? |
+| `GYM_STRATEGY` | before | default | tuned | under $20? |
 |---|---|---|---|---|
-| `reference` | $195 | $99 | $63 | no |
-| `shipped` | $152 | $68 | $44 | no |
-| `split-gate` | $88 | $48 | $32 | no |
-| `sonnet-gate` | $66 | $42 | $28 | no |
-| **`economy`** | $38 | **$21** | **$15** | needs the Batch API |
-| `floor` | $34 | **$17** | $12 | yes, today |
+| `reference` | $285 | $89 | $71 | no |
+| `shipped` | $197 | $64 | $52 | no |
+| `split-gate` | $128 | $49 | $40 | no |
+| `sonnet-gate` | $105 | $37 | $30 | no |
+| **`economy`** | $48 | **$20** | **$17** | **yes, at defaults** |
+| `floor` | $45 | $16 | $14 | yes — but see below |
 
-*tuned* = `GYM_BUFFER_TARGET=4 GYM_EFFORT_VALIDATE=low GYM_LOOKAHEAD_CELLS=6`
+*before* = one call per item, no caching, no batching. *default* = what now ships.
+*tuned* = default + `GYM_BUFFER_TARGET=4 GYM_LOOKAHEAD_CELLS=6`
 
-The honest answer: **$20 needs both** the structural work and a mid-tier model strategy.
-Structure alone takes `split-gate` from $128 to $32 — a 4× improvement — but not to $20.
-
-The configuration I would actually run is `economy` + tuned, at about $21 today and $15
-once batching exists. It keeps **Opus on the blueprint and on the grader** — the two
-places where a shortcut compounds or breaks an invariant — and moves item writing and
-validation down. `floor` is under $20 today but gives up the uncharitable grader, which
-is invariant 9, and I would not.
+**`GYM_STRATEGY=economy` is now at the $20 line with no tuning at all**, and $17
+tuned. It keeps **Opus on the blueprint and on the grader** — the two places where a
+shortcut compounds or breaks an invariant. `floor` buys three more dollars by giving
+up the uncharitable grader, which is invariant 9; that is the one trade I would not
+make, because a charitable grader corrupts the training signal itself rather than
+merely blanding an item.
 
 One thing that shows up only at this budget: the **fixed floor** is about $7.50/month
 (blueprints $3.15, D6 grading $4.35) regardless of how many items you answer. At $200 that

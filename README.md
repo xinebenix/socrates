@@ -46,7 +46,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 147 tests, no network
+npm test          # 154 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -167,6 +167,11 @@ though it reads as mastered, because the failures above are the evidence that it
 fresh item, so a second visit is a second rep rather than the same question twice.
 Without this a fresh blueprint could never produce a session longer than it has nodes.
 
+**Speculative work is billed at half price.** The worker's buffer fills go through
+the Message Batches API — a 50% discount in exchange for asynchronous results, which
+is free money for a buffer since nobody is waiting on it. The pipeline persists in
+the database and survives restarts; sessions themselves never wait on a batch.
+
 **Items are generated in sets, one call per cell.** Nearly all of a generation's output
 is reasoning about the *cell* — what the node means, what a learner gets wrong, which
 distractors are live — and that work is identical for every item on it. A cell's whole
@@ -273,7 +278,7 @@ invariant 1 required adding one, built in the same visual language.
 ## Tests
 
 ```bash
-npm test                 # 147 tests, no network, ~1.8s
+npm test                 # 154 tests, no network, ~1.9s
 npm run test:grader      # the grader regression set against the live model
 ```
 

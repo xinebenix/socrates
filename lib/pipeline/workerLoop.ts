@@ -13,7 +13,9 @@
 import { getDb } from '../db';
 import { listConcepts } from '../db/queries';
 import { logEvent } from '../ops';
-import { bufferTarget, topUpBuffer } from './buffer';
+import { bufferTarget, dueShortfalls, topUpBuffer } from './buffer';
+import { batchingEnabled } from '../llm/batch';
+import { cellsInFlight, processBatches, submitGenerationBatch } from './batchFill';
 import { budgetStatus, speculativeGenerationAllowed } from '../cost';
 
 /** Logged once per crossing, not once per tick. */
@@ -78,6 +80,36 @@ export async function tick(maxGenerationsPerConcept = 8): Promise<void> {
     return;
   }
   budgetWarned = false;
+
+  // The worker's fills are speculative by definition, so they go through the Batch
+  // API at half price when it is available. Results land a tick or two later, which
+  // a buffer can afford; the session's own paths stay synchronous.
+  if (batchingEnabled()) {
+    try {
+      const progress = await processBatches(db);
+      status.generated += progress.itemsPersisted;
+      status.failed += progress.failed;
+
+      const inFlight = cellsInFlight(db);
+      for (const concept of listConcepts(db)) {
+        const shorts = dueShortfalls(db, concept.id, {
+          maxGenerations: maxGenerationsPerConcept,
+          exclude: inFlight,
+        });
+        if (shorts.length > 0) await submitGenerationBatch(db, shorts);
+      }
+
+      status.ticks += 1;
+      status.lastTickAt = new Date(started).toISOString();
+      status.lastTickMs = Date.now() - started;
+      return;
+    } catch (err) {
+      // The discount is never worth an empty buffer: if the batch path fails, log
+      // loudly and fall through to the synchronous fill for this tick.
+      status.lastError = err instanceof Error ? err.message : String(err);
+      logEvent(db, 'error', 'batch.tick_failed', { error: status.lastError });
+    }
+  }
 
   for (const concept of listConcepts(db)) {
     try {

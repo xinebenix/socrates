@@ -244,7 +244,7 @@ export async function generateMcItems(
   return { items: accepted, attempts, rejections, error: null };
 }
 
-function checkMcShape(gen: McItemOut): string | null {
+export function checkMcShape(gen: McItemOut): string | null {
   if (gen.options.length !== 4) return `expected 4 options, got ${gen.options.length}`;
   const correct = gen.options.filter((o) => o.is_correct);
   if (correct.length !== 1) return `expected exactly 1 correct option, got ${correct.length}`;
@@ -370,6 +370,54 @@ export async function generateFreeItem(db: Db, cellId: number): Promise<Generati
   };
 }
 
+/**
+ * The generation call for a cell, built without sending it — the batch pipeline
+ * submits these through the Batch API instead of the synchronous transport. Same
+ * builder, same schema, same model routing; only the billing differs.
+ */
+export function buildMcCallForCell(
+  db: Db,
+  cellId: number,
+  want: number
+): { call: ReturnType<typeof buildMcItemCall>; nodeId: number; depth: number } | null {
+  const ctx = loadContext(db, cellId);
+  if (!ctx || ctx.cell.depth === 6) return null;
+
+  const previous = recentStems(db, cellId, RECENT_STEMS_MC);
+  return {
+    call: buildMcItemCall({
+      nodeTitle: ctx.node.title,
+      nodeDescription: ctx.node.description,
+      depthLevel: ctx.cell.depth,
+      sourceExcerpt: ctx.excerpt,
+      misconceptions: ctx.misconceptions.map((m) => ({
+        label: m.label,
+        description: m.description,
+      })),
+      recentStems: previous,
+      activeMisconceptionLabels: ctx.activeLabels,
+      count: want,
+    }),
+    nodeId: ctx.node.id,
+    depth: ctx.cell.depth,
+  };
+}
+
+/** The context the batch pipeline needs when generation results come back. */
+export function cellGenerationContext(
+  db: Db,
+  cellId: number
+): { nodeId: number; nodeDescription: string; excerpt: string; depth: number } | null {
+  const ctx = loadContext(db, cellId);
+  if (!ctx) return null;
+  return {
+    nodeId: ctx.node.id,
+    nodeDescription: ctx.node.description,
+    excerpt: ctx.excerpt,
+    depth: ctx.cell.depth,
+  };
+}
+
 /* ------------------------------------------------------------------ shared */
 
 interface GenContext {
@@ -406,7 +454,7 @@ function loadContext(db: Db, cellId: number): GenContext | null {
  * Rejections are logged too. The rejection rate per node is the signal that a
  * blueprint node is badly drawn, which the item-health screen surfaces.
  */
-function logRejection(
+export function logRejection(
   db: Db,
   cellId: number,
   verdict: ValidatorVerdict,

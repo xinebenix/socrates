@@ -105,7 +105,7 @@ export function buildValidationCall(input: ValidationInput): StructuredCall {
       `<item>\n<stem>${input.stem}</stem>\n<options>\n${options}\n</options>\n</item>`,
     schema: VALIDATION_SCHEMA,
     maxTokens: 4000,
-    effort: effortFor('validate'),
+    effort: effortFor('validate', input.depth),
     model: modelFor('validate', input.depth),
   };
 }

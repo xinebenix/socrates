@@ -228,6 +228,16 @@ describe('effort routing', () => {
     expect(effortFor('grade')).toBe('high');
   });
 
+  it('validates shallow items at low effort and deep ones at high', () => {
+    expect(effortFor('validate', 1)).toBe('low');
+    expect(effortFor('validate', 3)).toBe('low');
+    expect(effortFor('validate', 4)).toBe('high');
+    expect(effortFor('validate')).toBe('high');
+    // The override moves both ends at once.
+    process.env.GYM_EFFORT_VALIDATE = 'high';
+    expect(effortFor('validate', 1)).toBe('high');
+  });
+
   it('accepts a valid override and ignores nonsense', () => {
     process.env.GYM_EFFORT_ITEM = 'xhigh';
     expect(effortFor('item')).toBe('xhigh');

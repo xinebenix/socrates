@@ -9,6 +9,7 @@ import { STRONG_FROM_DEPTH, effortFor, model, modelFor, strategyName } from '@/l
 import { bufferConcurrency, bufferTarget } from '@/lib/pipeline/buffer';
 import { listConcepts } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
+import { batchingEnabled } from '@/lib/llm/batch';
 import {
   budgetStatus,
   dayKey,
@@ -143,6 +144,26 @@ export async function GET(req: Request) {
       byKind: spendBy(db, 'kind', dayKey(-29)),
       byModel: spendBy(db, 'model', dayKey(-29)),
       aheadOfUse: unservedItemSpend(db),
+    };
+
+    // The half-price pipeline: open batches mean the worker is waiting on the
+    // provider, not stuck. An old openest batch plus an empty buffer is the signal
+    // worth acting on.
+    report.batching = {
+      enabled: batchingEnabled(),
+      openBatches: (
+        db.prepare(`SELECT COUNT(*) AS n FROM gen_batches WHERE completed_at IS NULL`).get() as {
+          n: number;
+        }
+      ).n,
+      oldestOpen:
+        (
+          db
+            .prepare(
+              `SELECT MIN(created_at) AS at FROM gen_batches WHERE completed_at IS NULL`
+            )
+            .get() as { at: string | null }
+        ).at ?? null,
     };
 
     report.ops = {
