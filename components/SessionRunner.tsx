@@ -53,6 +53,25 @@ export function SessionRunner({
 
   const shownAt = useRef<number>(Date.now());
 
+  /**
+   * The dictionary behind a ref, deliberately.
+   *
+   * `load` and `submit` use it only for error fallbacks, but naming `t` as a dependency
+   * puts the dictionary's *identity* in the dependency array — and the identity changes
+   * on every locale switch, because LocaleToggle calls router.refresh() and the dict
+   * arrives freshly deserialized across the RSC boundary. `useEffect(..., [load])` would
+   * then re-run load() mid-session: the in-progress answer is cleared, and next-item is
+   * fetched again. The current slot was already stamped served when it was handed out,
+   * so nextUnservedSlot returns the *following* one and the question the learner was
+   * looking at is consumed with no response recorded. In a benchmark run that silently
+   * drops an item from the measured set.
+   *
+   * A ref gives the callbacks the current strings without making them depend on which
+   * language those strings are in.
+   */
+  const dict = useRef(t);
+  dict.current = t;
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -64,7 +83,7 @@ export function SessionRunner({
     try {
       const res = await fetch(`/api/session/${sessionId}/next-item`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? t.session.errorFetchNextItem);
+      if (!res.ok) throw new Error(data.error ?? dict.current.session.errorFetchNextItem);
 
       setKindOfSession(data.kind);
       setProgress(data.progress);
@@ -81,7 +100,7 @@ export function SessionRunner({
     } finally {
       setLoading(false);
     }
-  }, [sessionId, t]);
+  }, [sessionId]);
 
   useEffect(() => {
     void load();
@@ -125,7 +144,7 @@ export function SessionRunner({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? t.session.errorRecordAnswer);
+      if (!res.ok) throw new Error(data.error ?? dict.current.session.errorRecordAnswer);
 
       setProgress(data.progress);
 
@@ -142,7 +161,7 @@ export function SessionRunner({
     } finally {
       setSubmitting(false);
     }
-  }, [item, confidence, submitting, feedback, selectedOptionId, freeText, sessionId, load, t]);
+  }, [item, confidence, submitting, feedback, selectedOptionId, freeText, sessionId, load]);
 
   // Keyboard: 1-4 pick, G/U/C set confidence, Enter submits then advances.
   useEffect(() => {

@@ -290,7 +290,8 @@ export const en = {
   },
   login: {
     eyebrow: 'Γνῶθι σεαυτόν — but first, identify yourself',
-    headline: 'The gym is locked.',
+    headline: 'The gym is {emphasis}.',
+    headlineEmphasis: 'locked',
     lede: 'One password, shared. It stands between the open internet and both your learning record and the API key that generates every item.',
     passwordPlaceholder: 'Password',
     passwordAriaLabel: 'Password',
@@ -593,7 +594,8 @@ export const zh: Dict = {
   },
   login: {
     eyebrow: 'Γνῶθι σεαυτόν — 认识你自己；不过，先说明你是谁',
-    headline: '此馆已上锁。',
+    headline: '此馆{emphasis}。',
+    headlineEmphasis: '已上锁',
     lede: '一道口令，众人共用。它拦在外面的世界与两样东西之间：你的学习记录，以及生成每一道题所凭的 API 密钥。',
     passwordPlaceholder: '口令',
     passwordAriaLabel: '口令',

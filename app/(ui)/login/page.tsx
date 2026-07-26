@@ -11,6 +11,7 @@ export default async function LoginPage({
 }) {
   const { next } = await searchParams;
   const t = await getDict();
+  const [headBefore, headAfter] = t.login.headline.split('{emphasis}');
 
   return (
     <div className="shell">
@@ -25,8 +26,13 @@ export default async function LoginPage({
             <span className="eyebrow">{t.login.eyebrow}</span>
           </div>
 
+          {/* Split on the placeholder rather than filled, because the emphasised word
+              carries markup. Chinese puts it in a different position — 此馆{emphasis}。 —
+              which a split handles and a hardcoded prefix/suffix would not. */}
           <h1 className="display" style={{ fontSize: 'clamp(30px,5vw,46px)' }}>
-            The gym is <em className="accent">locked</em>.
+            {headBefore}
+            <em className="accent">{t.login.headlineEmphasis}</em>
+            {headAfter}
           </h1>
           <p className="lede">{t.login.lede}</p>
 
