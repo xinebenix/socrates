@@ -1,13 +1,15 @@
 # Socrates — 简体中文文案审校 / Chinese copy review
 
-**275 strings** across nine screens. For each: the English it replaces, the Chinese now shipping, and what the string is *for* — when a reader sees it and what it has to accomplish.
+**311 strings** across nine screens. For each: the English it replaces, the Chinese now shipping, and what the string is *for* — when a reader sees it and what it has to accomplish.
 
 The last column is the one to read first.
 
 | | count | what it means for review |
 |---|---|---|
-| 🟢 **From the comp** | 139 | Lifted from `Socrates zh-CN.dc.html` character for character. This is your designer's copy — I changed nothing. Review only if the comp itself needs revising. |
-| 🟡 **Written to match** | 136 | The comp drew seven screens but not every state. These were translated against the comp's own pairs as a style guide. **This is the half that needs a native reader.** |
+| 🟢 **From the comp** | 131 | Still verbatim `Socrates zh-CN.dc.html`. Your own copy — I changed nothing. Review only if the comp itself needs revising. |
+| 🟡 **Written to match** | 180 | The comp drew seven screens but not every state, and the product has since grown three surfaces it never drew. These were translated against the comp's own pairs as a style guide. **This is the part that needs a native reader.** |
+
+A string is green only where two independent checks agree: the record kept while translating, *and* a fresh character-for-character match against the comp file. Green tells you to skip a string, so a wrong green costs that string its review, while a wrong yellow costs you a glance. Where the two disagreed I marked it yellow.
 
 ---
 
@@ -25,13 +27,29 @@ The last column is the one to read first.
 
 ---
 
+## Where the shipped copy has moved away from the comp
+
+The comp was drawn against an earlier product. Eight strings it *did* draw are no longer what ships, and three whole surfaces did not exist when it was drawn. All of it is marked 🟡 below, but it is worth knowing as a group, because in each case the comp is not simply a better version I failed to use:
+
+| what the comp drew | what ships | why |
+|---|---|---|
+| 此馆已上锁。 · 口令 · “一道口令，众人共用…” | 训练馆已上锁。 · 密码 · “你的记录跟随账户，而非设备…” | The deployment moved from one shared password to real accounts. The comp's lede describes a product that no longer exists — it promised that one 口令 stood between the world and the API key. `密码` rather than `口令` follows from that: it is now your own credential, not a house key. **Worth a hard look** — this is the largest rewrite in the set. |
+| 考察，自一概念始 | 致知在格物 | The eyebrow on the first screen became a classical epigraph (《礼记·大学》). It says something adjacent rather than the same thing: *knowledge comes from the investigation of things* rather than *the examination begins with a subject*. If that is too oblique for a first-run screen, the comp's line is the safe revert. |
+| “先写下一个概念，再把你正读的材料贴进来。此处不作讲授…” | “写下一个概念，贴上你正读的材料——我不讲授…” | Same argument, roughly 40% shorter, to survive a phone screen. The comp's is better prose. If it fits your layout, take it back. |
+| Γνῶθι σεαυτόν — 认识你自己；不过，先说明你是谁 | Γνῶθι σεαυτόν——但请先表明身份 | Shortened for the same reason. The comp keeps the gloss 认识你自己, which is the half a reader who does not read Greek actually gets. |
+| `¥` | `$` | See the note above. |
+
+**The three surfaces the comp never drew**, all necessarily 🟡: registration and sign-in (`login.signup*`, `login.to*`, `login.code*`), the shared concept library (`concepts.library*`, `concepts.sharedConceptNote`), and the “I don't know” answer path (`session.dontKnow*`, `session.feedback*DontKnow`). The last is the one to read closely: saying you do not know must feel like a legitimate move rather than a forfeit, or learners will guess instead, and a guess teaches the student model the wrong thing.
+
+---
+
 ## Chrome — 页眉
 
 *The sticky header on every screen, plus the spend popover it opens.*
 
 Visible constantly, so it must read as furniture rather than content. The nav labels are the app's own vocabulary and set the terms every other screen reuses: whatever 蓝图 / 总览 / 题目健康 / 基准集 mean here, they must mean the same thing everywhere else.
 
-<sub>27 strings · 🟢 6 from the comp · 🟡 21 written to match</sub>
+<sub>27 strings · 🟢 5 from the comp · 🟡 22 written to match</sub>
 
 | | Key | English | 中文 | What it is for |
 |---|---|---|---|---|
@@ -60,7 +78,7 @@ Visible constantly, so it must read as furniture rather than content. The nav la
 | 🟡 | `batchShareNote` | {percent}% of {calls} calls went through the Batch API at half rate. | **{calls} 次调用中有 {percent}% 经 Batch API 以半价计费。** | How much of the spend went through the half-price asynchronous API. Diagnostic: a low share means a discount is not landing. |
 | 🟡 | `batchShareNoteNone` | {percent}% of {calls} calls went through the Batch API at half rate — none yet, so nothing is discounted. | **{calls} 次调用中有 {percent}% 经 Batch API 以半价计费——尚无一次，故并无折扣。** | Same, worded for zero — the reader needs to know nothing is discounted yet. |
 | 🟡 | `priceTableNote` | Token counts are exact. Dollars are estimated from a built-in price table that may be out of date — set {envVar} to correct it. | **token 计数精确。金额由内置价格表估算，该表可能已过时——设置 {envVar} 可加以校正。** | The disclaimer under the figures. The distinction is the point: token counts come from the API and are exact, the money is an estimate off a table that can go stale. {envVar} is a literal setting name and stays Latin. |
-| 🟢 | `currencySymbol` | $ | **¥** | Currency prefix. Deliberately NOT ¥ — see the note on currency above. |
+| 🟡 | `currencySymbol` | $ | **$** | Currency prefix. Deliberately NOT ¥ — see the note on currency above. |
 | 🟡 | `amountBelowCent` | <$0.01 | **<$0.01** | Shown instead of $0.00 when a real amount rounds below a cent. |
 
 ## Concepts — 概念
@@ -69,15 +87,15 @@ Visible constantly, so it must read as furniture rather than content. The nav la
 
 The first thing a new reader sees, and the only place the product explains what it is. The lede has to convey that this is not a tutor that lectures — it decomposes your material and interrogates you against it.
 
-<sub>31 strings · 🟢 16 from the comp · 🟡 15 written to match</sub>
+<sub>37 strings · 🟢 14 from the comp · 🟡 23 written to match</sub>
 
 | | Key | English | 中文 | What it is for |
 |---|---|---|---|---|
 | 🟢 | `topbarSubtitle` | the endless knowledge gym | **无尽的心智练习之馆** | Header subtitle on the landing and login screens. Sets the tone for the whole product in five words. |
-| 🟢 | `eyebrow` | The examination begins with a subject | **考察，自一概念始** | Small label above the main heading. |
+| 🟡 | `eyebrow` | The examination begins with a subject | **致知在格物** | Small label above the main heading. |
 | 🟢 | `heading` | What shall we {emphasis}? | **这一回要{emphasis}的，是什么？** | The main heading. {emphasis} is replaced by the accented word below, which is coloured rather than italicised. |
 | 🟢 | `headingEmphasis` | examine | **弄明白** | The emphasised word inside that heading. |
-| 🟢 | `lede` | Name a concept and paste what you are learning it from. I will not lecture you — I will decompose the material, question you against the map, and keep coming back to the parts you cannot yet hold. | **先写下一个概念，再把你正读的材料贴进来。此处不作讲授：材料到手，我便将它拆成一张知识的图，照图向你发问，并一再回到你尚未真正把握之处。** | The product's own description of itself. The key claim: it will not lecture — it takes your material, breaks it into a map, and questions you against that map, returning to what you have not yet grasped. |
+| 🟡 | `lede` | Name a concept and paste what you are learning it from. I will not lecture you — I will decompose the material, question you against the map, and keep coming back to the parts you cannot yet hold. | **写下一个概念，贴上你正读的材料——我不讲授，只拆解、发问，一再回到你尚未把握之处。** | The product's own description of itself. The key claim: it will not lecture — it takes your material, breaks it into a map, and questions you against that map, returning to what you have not yet grasped. |
 | 🟢 | `nameInputPlaceholder` | Socialism, Bayes' theorem, CSS specificity… | **社会主义、贝叶斯定理、CSS 优先级……** | Placeholder in the concept-name field. Three deliberately unlike examples, to show the tool is not subject-specific. |
 | 🟡 | `nameInputAriaLabel` | Concept name | **概念名称** | Screen-reader name for that field. |
 | 🟢 | `beginButton` | Begin | **开始** | Submits the new concept. |
@@ -100,6 +118,12 @@ The first thing a new reader sees, and the only place the product explains what 
 | 🟢 | `coveredStat` | {percent}% covered | **已覆盖 {percent}%** | Card statistic: share of the map reached so far. |
 | 🟢 | `nodesStat` | {count} nodes | **{count} 个节点** | Card statistic: how many sub-concepts the map has. |
 | 🟢 | `degradedModeNote` | No source material — degraded mode. | **无原始材料——降级模式。** | Card note for a concept created without source material. |
+| 🟡 | `sharedConceptNote` | Shared — the canonical version of this topic, and its bank is everyone’s. | **共享——本主题的通用版本，题库属于所有人。** | Marks a concept whose map and question bank are shared across everyone rather than private to one learner. The progress record stays personal; only the material is common. |
+| 🟡 | `librarySectionLabel` | Already decomposed | **已有人拆解** | Heading over concepts someone has already decomposed, which you can adopt instead of building your own. |
+| 🟡 | `libraryNote` | Concepts other people have mapped. Joining one gives you their blueprint and their item bank; your mastery starts where it should, at nothing. | **他人已绘制的概念。加入即可获得其蓝图与题库；你的掌握度理应从零开始。** | Sits under the library heading and explains what joining actually transfers. Two claims have to survive: the blueprint and the item bank come with you, and mastery does not — you start at zero on someone else’s map. A reader who thinks joining imports progress will distrust the dashboard on day one. |
+| 🟡 | `libraryBankSize` | {count} items written | **已写 {count} 道题** | How many questions have already been written for a shared concept — the reason adopting one is cheaper than starting fresh. |
+| 🟡 | `libraryJoinButton` | Take it up | **接手** | Adopts a shared concept. You get the existing map and bank; your mastery record starts empty. |
+| 🟡 | `libraryJoinButtonBusy` | Joining… | **加入中……** | Busy label while joining. |
 | 🟢 | `blueprintLink` | Blueprint | **蓝图** | Card link to the map. |
 | 🟢 | `trainButton` | Train | **训练** | Card button that starts a session. |
 | 🟡 | `trainButtonBusy` | Assembling… | **组卷中……** | Busy label while the session is being planned. |
@@ -111,7 +135,7 @@ The first thing a new reader sees, and the only place the product explains what 
 
 The screen a learner spends nearly all their time on. Tone matters more here than anywhere: the feedback must be exacting without being punitive, because the whole design rests on someone being willing to be wrong in front of it repeatedly.
 
-<sub>43 strings · 🟢 16 from the comp · 🟡 27 written to match</sub>
+<sub>54 strings · 🟢 16 from the comp · 🟡 38 written to match</sub>
 
 | | Key | English | 中文 | What it is for |
 |---|---|---|---|---|
@@ -141,6 +165,17 @@ The screen a learner spends nearly all their time on. Tone matters more here tha
 | 🟢 | `submit` | Submit | **提交** | Submits the answer. |
 | 🟡 | `submitting` | Submitting… | **提交中……** | Busy label while submitting. |
 | 🟡 | `recording` | Recording… | **记录中……** | Busy label while the response is written down. |
+| 🟡 | `submitHintChooseOption` | Choose an option. Number keys work too. | **选一个选项。数字键亦可。** | Hint under the submit button when no option has been picked yet. |
+| 🟡 | `submitHintWriteAnswer` | Write your answer. | **写下你的作答。** | Hint when the written-answer box is still empty. |
+| 🟡 | `submitHintConfidence` | How sure are you? Answer that before you submit — it is half the signal. | **你有多确定？提交之前先答此问——它是信号的一半。** | Hint when an answer is chosen but confidence has not been set. The phrase "half the signal" is the argument for why confidence is mandatory rather than optional. |
+| 🟡 | `submitHintReady` | Ready. Press Enter. | **就绪。按 Enter 提交。** | Hint when everything needed has been supplied. |
+| 🟡 | `countdownRemaining` | Sit with it — {seconds}s | **且思之——{seconds} 秒** | A deliberate pause before the answer can be revealed. "Sit with it" asks for retrieval effort — the struggle before seeing the answer is where the learning happens, so this is not an artificial delay. |
+| 🟡 | `dontKnow` | I don't know | **我不知道** | Explicitly declares not knowing, rather than guessing. |
+| 🟡 | `dontKnowHint` | This records the item as not known, then shows the answer. Like any answer, the record stands. | **此举先把此题记作「未知」，再揭出答案。与作答一样，记录既下，不可更改。** | Explains what that button does and, importantly, that the record stands — declaring ignorance is honest, not free. |
+| 🟡 | `feedbackHeadDontKnow` | You did not know it. | **此题你尚不知。** | Headline after declaring not knowing. Neither congratulation nor reprimand: a flat acknowledgement. |
+| 🟡 | `feedbackEyebrowDontKnow` | here it is, and why | **答案在此，及其所以然** | Label above the explanation in that case. |
+| 🟡 | `dontKnowFreeSummary` | You passed on this one. A passing answer must contain each of the following. | **此题你未作答。合格的答案，须含以下各项。** | Shown for a passed-on written question, listing what a passing answer would have had to contain. |
+| 🟡 | `dontKnowCriterionNote` | Unanswered, so unmet. | **未作答，故未达成。** | Marks each rubric criterion in that case — unanswered, therefore unmet. |
 | 🟢 | `verdictCorrect` | correct | **正解** | Tag on the option that was actually right. |
 | 🟢 | `verdictYourChoice` | your choice | **你的选择** | Tag on the option the learner picked. |
 | 🟡 | `feedbackHeadCorrect` | Just so. | **正是如此。** | Headline when the answer was right. Approving without being congratulatory — the design deliberately avoids rewarding correctness, because reward pushes people toward easy questions. |
@@ -355,25 +390,44 @@ The distinction this screen exists to make: practise on generated questions, mea
 | 🟡 | `frozenItemsEmpty` | Empty. | **尚空。** | Empty state for that list. |
 | 🟡 | `runStartError` | could not start the run | **未能开始此次运行** | Fallback error if a run cannot start. |
 
-## Login — 登录
+## Login and registration — 登录与注册
 
-*The password gate in front of everything.*
+*Signing in, and opening an account.*
 
-Short, and the one screen a reader may reach unable to read the language. The language toggle is deliberately present here for that reason.
+Two states on one screen, toggled by the links at the bottom. It is the one place a reader may arrive unable to read the language, which is why the locale toggle is present here and not only inside the app. Almost all of it is new since the comp: it drew a single shared password, and the deployment now has real accounts.
 
-<sub>9 strings · 🟢 6 from the comp · 🟡 3 written to match</sub>
+<sub>28 strings · 🟢 1 from the comp · 🟡 27 written to match</sub>
 
 | | Key | English | 中文 | What it is for |
 |---|---|---|---|---|
-| 🟢 | `eyebrow` | Γνῶθι σεαυτόν — but first, identify yourself | **Γνῶθι σεαυτόν — 认识你自己；不过，先说明你是谁** | Label above the heading. Γνῶθι σεαυτόν is "know thyself" and stays Greek, as in the comp; the joke is that the app wants identification first. |
-| 🟢 | `headline` | The gym is {emphasis}. | **此馆{emphasis}。** | The heading. {emphasis} is the accented word. |
-| 🟡 | `headlineEmphasis` | locked | **已上锁** | The emphasised word in that heading. |
-| 🟢 | `lede` | One password, shared. It stands between the open internet and both your learning record and the API key that generates every item. | **一道口令，众人共用。它拦在外面的世界与两样东西之间：你的学习记录，以及生成每一道题所凭的 API 密钥。** | Why there is a password at all: it stands between the open internet and two things — the learning record, and the API key that pays for every generated question. |
-| 🟢 | `passwordPlaceholder` | Password | **口令** | Placeholder in the password field. |
-| 🟢 | `passwordAriaLabel` | Password | **口令** | Screen-reader name for it. |
-| 🟢 | `submitButton` | Enter | **进入** | Submits the password. |
-| 🟡 | `submitButtonBusy` | Checking… | **查验中……** | Busy label. |
-| 🟡 | `signInFailedFallback` | could not sign in | **未能进入** | Fallback error on a failed attempt. |
+| 🟡 | `eyebrow` | Γνῶθι σεαυτόν — but first, identify yourself | **Γνῶθι σεαυτόν——但请先表明身份** | Label above the heading. Γνῶθι σεαυτόν is "know thyself" and stays Greek, as in the comp; the joke is that the app wants identification first. |
+| 🟡 | `headline` | The gym is {emphasis}. | **训练馆已{emphasis}。** | The heading. {emphasis} is the accented word. |
+| 🟡 | `headlineEmphasis` | locked | **上锁** | The emphasised word in that heading. |
+| 🟡 | `lede` | Your record follows the account, not the machine — sign in anywhere and the schedule is where you left it. | **你的记录跟随账户，而非设备——在任何地方登录，进度都在你离开的位置。** | The paragraph under the heading, and the reason to sign in rather than just start using it. The claim is portability: the record lives with the account, so the schedule survives changing machines. The comp said something else entirely here — it explained a shared password — because that is what the product had at the time. |
+| 🟡 | `emailPlaceholder` | Email | **邮箱** | Placeholder in the email field. |
+| 🟡 | `emailAriaLabel` | Email | **邮箱** | Screen-reader name for it. |
+| 🟡 | `passwordPlaceholder` | Password | **密码** | Placeholder in the password field. |
+| 🟡 | `passwordAriaLabel` | Password | **密码** | Screen-reader name for it. |
+| 🟢 | `submitButton` | Enter | **进入** | Submits the sign-in form. |
+| 🟡 | `submitButtonBusy` | Checking… | **正在核对……** | Busy label. |
+| 🟡 | `signInFailedFallback` | could not sign in | **无法登录** | Fallback error on a failed attempt. |
+| 🟡 | `toSignupPrompt` | No account yet? | **还没有账户？** | Prompt beside the link to registration. |
+| 🟡 | `toSignupLink` | Create one | **创建一个** | The link itself. |
+| 🟡 | `toLoginPrompt` | Already have an account? | **已经有账户？** | Prompt beside the link back to signing in. |
+| 🟡 | `toLoginLink` | Sign in | **登录** | The link itself. |
+| 🟡 | `signupEyebrow` | A record of your own | **属于你自己的记录** | Label above the registration heading. The point of an account is a record that belongs to you. |
+| 🟡 | `signupHeadline` | Open an {emphasis}. | **开设一个{emphasis}。** | The registration heading. {emphasis} is the accented word. |
+| 🟡 | `signupHeadlineEmphasis` | account | **账户** | The emphasised word in that heading. |
+| 🟡 | `signupLede` | The blueprints and the item bank are shared; what you know is not. Concepts other people have mapped are yours to take up, with your own mastery starting at zero. | **蓝图与题库是共享的，你的掌握程度不是。他人已绘制的概念你可直接接手，而掌握度从零开始。** | The paragraph under the registration heading. Same two claims as the library note, made before the reader has an account: shared material, private record. It is the product’s answer to “why would I join rather than start my own?” |
+| 🟡 | `codePlaceholder` | Registration code | **注册码** | Placeholder for the registration code that gates sign-up. |
+| 🟡 | `codeAriaLabel` | Registration code | **注册码** | Screen-reader name for it. |
+| 🟡 | `codeNote` | Generating items costs real money against this deployment’s API key, so signup is by code. Ask whoever runs it. | **生成题目会实际消耗本部署的 API 额度，因此注册需要邀请码。请向管理者索取。** | Explains why registration is gated at all. The honest reason is cost — every generated item spends against this deployment’s API key — and saying so is friendlier than an unexplained wall. It must not read as exclusivity; it must read as a bill someone is paying. Ends by telling the reader what to actually do: ask whoever runs the deployment. |
+| 🟡 | `displayNamePlaceholder` | Name (optional) | **称呼（可选）** | Placeholder for an optional display name. |
+| 🟡 | `displayNameAriaLabel` | Display name | **显示名称** | Screen-reader name for it. |
+| 🟡 | `signupButton` | Create account | **创建账户** | Creates the account. |
+| 🟡 | `signupButtonBusy` | Creating… | **正在创建……** | Busy label. |
+| 🟡 | `signupFailedFallback` | could not create the account | **无法创建账户** | Fallback error if the account cannot be created. |
+| 🟡 | `signOutButton` | Sign out | **退出登录** | Signs out. Sits in the header beside the account name. |
 
 ## Depth ladder — 深度层级
 
@@ -407,11 +461,12 @@ If you have limited time, these carry the most meaning per word and would do the
 
 1. **`session.confidencePrompt`** — 提交前——你有多确定？ The confidence question is the single most important interaction in the product. Four states matter: right-and-confident, right-and-guessing, wrong-and-unsure, wrong-and-confident. If this reads as an optional extra rather than part of answering, the student model degrades.
 2. **`session.feedbackHeadWrong`** — 此番不中。 It must be a plain statement of fact. People have to be willing to be wrong in front of this screen many times a day.
-3. **`blueprint.lede`** — the argument that the map is fallible and editing it by hand is the intended workflow. If this reads as an apology for a broken feature, nobody will edit anything.
-4. **`concepts.lede`** — the product's only self-description. The claim is that it does not lecture.
-5. **`depth.*`** — six definitions that decide what every generated question is *for*. These need to be exact more than graceful.
-6. **`items.statsAdvisory`** and **`dashboard.masteryGridLabel`** — deliberate hedges. Without them the numbers read as more solid than they are.
-7. **`blueprint.redrawMergeNote`** and **`blueprint.deleteNodeConfirm`** — the two places a reader decides whether an irreversible-looking action is safe.
+3. **`session.dontKnow`** and **`session.dontKnowHint`** — the button that admits ignorance, and the line explaining what it costs. It has to read as a legitimate third answer, not as giving up. A learner who feels judged here will guess instead, and a lucky guess is the single most damaging thing that can enter the student model.
+4. **`blueprint.lede`** — the argument that the map is fallible and editing it by hand is the intended workflow. If this reads as an apology for a broken feature, nobody will edit anything.
+5. **`concepts.lede`** — the product's only self-description. The claim is that it does not lecture.
+6. **`depth.*`** — six definitions that decide what every generated question is *for*. These need to be exact more than graceful.
+7. **`items.statsAdvisory`** and **`dashboard.masteryGridLabel`** — deliberate hedges. Without them the numbers read as more solid than they are.
+8. **`blueprint.redrawMergeNote`** and **`blueprint.deleteNodeConfirm`** — the two places a reader decides whether an irreversible-looking action is safe.
 
 ## How to report a change
 

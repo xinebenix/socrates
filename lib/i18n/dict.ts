@@ -390,7 +390,11 @@ export const zh: Dict = {
     batchShareNote: '{calls} 次调用中有 {percent}% 经 Batch API 以半价计费。',
     batchShareNoteNone: '{calls} 次调用中有 {percent}% 经 Batch API 以半价计费——尚无一次，故并无折扣。',
     priceTableNote: 'token 计数精确。金额由内置价格表估算，该表可能已过时——设置 {envVar} 可加以校正。',
-    currencySymbol: '¥',
+    // Dollars in both locales — see the CURRENCY note at the top of this file. The comp
+    // shows ¥, but these figures are Anthropic API billing in USD, so a ¥ in front of an
+    // unconverted number states an amount that is simply false. It also has to agree with
+    // amountBelowCent, which is the same figure rendered one step smaller.
+    currencySymbol: '$',
     amountBelowCent: '<$0.01',
   },
   concepts: {
