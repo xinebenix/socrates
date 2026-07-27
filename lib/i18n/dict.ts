@@ -337,6 +337,12 @@ export const en = {
     signupButtonBusy: 'Creating…',
     signupFailedFallback: 'could not create the account',
     signOutButton: 'Sign out',
+    // Three claims on the way in. Each is a fact about this codebase rather than a
+    // marketing figure: the length of the depth ladder, the reward mechanics the build
+    // spec rules out, and the scheduler behind the return visits.
+    proofDepthsLabel: 'Depths per node',
+    proofGamificationLabel: 'Streaks or points',
+    proofScheduleLabel: 'Spaced return',
   },
   depth: {
     d1Name: 'Recall',
@@ -690,6 +696,9 @@ export const zh: Dict = {
     signupButtonBusy: '正在创建……',
     signupFailedFallback: '无法创建账户',
     signOutButton: '退出登录',
+    proofDepthsLabel: '每节点深度',
+    proofGamificationLabel: '连胜与积分',
+    proofScheduleLabel: '间隔复习',
   },
   depth: {
     d1Name: '回忆',

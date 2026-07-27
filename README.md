@@ -58,7 +58,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 233 tests, no network
+npm test          # 247 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -417,12 +417,37 @@ One rule sits outside the breakpoints: `overflow-wrap: break-word` on `body`, so
 long unbreakable token — a URL in pasted source material, a provider error id echoed
 into the warning box — wraps instead of turning the page into a horizontal scroll.
 
+**The way in is the one dark screen.** `/login` and `/signup` come from the
+`Socrates Landing.dc.html` comp: a photograph of the hall full-bleed behind the form,
+shafts of light crossing it, dust drifting through them. Both are built from
+`components/AuthHero.tsx`, and the surface does not restyle the controls that stand on
+it — it re-points the design tokens for its subtree, so `.field`, `.btn`, `.note`, the
+warning box and the locale toggle come out right without knowing where they are. Three
+places need saying out loud anyway, and are the only exceptions in the stylesheet: the
+primary button, whose fill *is* `--ink`; the warning box, drawn for parchment; and the
+derived tokens like `--muted`, which are substituted where they are declared and so
+still carry `:root`'s ink no matter what the subtree says. The motion is background
+only — nothing here is on the answer path, and `prefers-reduced-motion` stops all of it,
+which is why the shafts carry a resting transform rather than only an animated one.
+
+Upright the composition turns over: a portrait crop, the copy resting on the bottom edge
+instead of beside the picture, one shaft instead of two, and the shade attached to the
+text column so that it grows with the form rather than being an ellipse the form can
+outgrow. The three claims beside the fields are facts about this repository — the length
+of the depth ladder, the reward mechanics section 9 rules out, the scheduler in
+`lib/schedule/sm2.ts` — not figures about usage.
+
+The background image is the one static asset the app serves, and adding it moved the
+middleware matcher: everything under `public/` is public by construction, so gating it
+buys nothing and cost correctness, since an unauthenticated request for the login page's
+own background was answered with a redirect back to the login page.
+
 ---
 
 ## Tests
 
 ```bash
-npm test                 # 233 tests, no network, ~10s
+npm test                 # 247 tests, no network, ~10s
 npm run test:grader      # the grader regression set against the live model
 ```
 

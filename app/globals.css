@@ -173,6 +173,22 @@ a:hover {
   to { background-position: 240% 0; }
 }
 
+/* The hall's atmosphere: shafts of light sweeping across it, and dust drifting
+   through them. Background only — nothing on the answer path moves. */
+@keyframes so-shaft {
+  0% { opacity: 0.22; transform: skewX(34deg) translateX(-70px) scaleX(0.9); }
+  50% { opacity: 0.78; transform: skewX(34deg) translateX(60px) scaleX(1.16); }
+  100% { opacity: 0.22; transform: skewX(34deg) translateX(-70px) scaleX(0.9); }
+}
+@keyframes so-motes {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 0 -180px, 0 -110px; }
+}
+@keyframes so-glimmer {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.85; }
+}
+
 .rise { animation: so-rise 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
 .fade { animation: so-fade 0.3s ease both; }
 
@@ -1072,3 +1088,367 @@ em.accent {
 }
 .locale-opt:disabled { cursor: default; opacity: 0.6; }
 .locale-opt + .locale-opt { border-left: 1px solid var(--rule-soft); }
+
+/* --------------------------------------------------------------- auth hero */
+
+/*
+ * The way in: login and signup, over a photograph of the hall.
+ *
+ * The whole screen sits on a dark image in both colour schemes, so rather than
+ * restyling every control that appears on it, the surface re-points the shared
+ * tokens — ink becomes parchment, the surfaces become washes of it at low alpha —
+ * and `.field`, `.btn`, `.note`, `.warnbox`, `.eyebrow` and the locale toggle come
+ * out right without knowing where they are. The exceptions are the two places where
+ * a token flip is not enough, both below: the primary button, whose fill *is* --ink,
+ * and the warning box, which is drawn for light ground.
+ *
+ * Note that the derived tokens have to be restated rather than inherited. A custom
+ * property is substituted where it is declared, so --muted, declared on :root as
+ * rgba(var(--ink-rgb), .45), still carries :root's ink here no matter what --ink-rgb
+ * says on this element.
+ */
+.auth-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  background: #0d0b09;
+  /* Restated for the same reason the derived tokens are: `color` was resolved against
+     :root's --ink when body declared it, and inherits as that computed value. */
+  color: #f7f1e1;
+
+  --ink: #f7f1e1;
+  --ink-rgb: 247, 241, 225;
+
+  --surface: rgba(247, 241, 225, 0.07);
+  --surface-raised: rgba(247, 241, 225, 0.07);
+  --surface-sunken: rgba(247, 241, 225, 0.14);
+
+  --rule: rgba(247, 241, 225, 0.24);
+  --rule-soft: rgba(247, 241, 225, 0.16);
+  --rule-strong: rgba(247, 241, 225, 0.26);
+  --muted: rgba(247, 241, 225, 0.5);
+  --muted-soft: rgba(247, 241, 225, 0.62);
+
+  /* Terracotta lightened until it reads as emphasis against the photograph rather
+     than disappearing into it. The saturated original stays as --hero-lamp, where a
+     solid fill gives it enough area to hold: the breathing dot and the button. */
+  --terra: #d9a08c;
+  --terra-deep: #edbaa7;
+  --terra-rgb: 217, 160, 140;
+  --hero-lamp: #a03e2b;
+
+  --verd: #7fc3ae;
+  --verd-rgb: 127, 195, 174;
+}
+
+/* ---- the ground itself */
+
+.hero-art {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.hero-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* The hall's dark left third is where the form goes; hold it there as the frame
+     narrows rather than letting the crop drift onto the lit lectern. */
+  object-position: 62% 50%;
+}
+
+/*
+ * Three passes of shade, in order: an even wash over the whole image, a soft ellipse
+ * deepening the side the text sits on, and a vignette closing the edges. Layered
+ * rather than one heavy overlay because a single scrim dark enough for 4.5:1 under
+ * the lede would flatten the photograph to a grey rectangle.
+ */
+.hero-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgba(13, 11, 9, 0.3);
+}
+.hero-scrim::before {
+  content: '';
+  position: absolute;
+  left: -14%;
+  top: 2%;
+  width: 66%;
+  height: 96%;
+  border-radius: 50%;
+  background: rgba(9, 8, 6, 0.78);
+  filter: blur(90px);
+}
+.hero-scrim::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 180px 60px rgba(13, 11, 9, 0.7);
+}
+
+.hero-shaft {
+  position: absolute;
+  z-index: 1;
+  top: -24%;
+  height: 150%;
+  transform-origin: top center;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  /* The resting pose, which is also what a reduced-motion reader gets: the animation
+     is cancelled there, and without a base transform the shafts would snap upright. */
+  opacity: 0.5;
+  transform: skewX(34deg);
+  background: linear-gradient(
+    90deg,
+    rgba(247, 241, 225, 0) 0%,
+    rgba(247, 241, 225, 0.62) 50%,
+    rgba(247, 241, 225, 0) 100%
+  );
+  filter: blur(30px);
+  animation: so-shaft 15s ease-in-out infinite;
+}
+.hero-shaft.two {
+  width: 120px;
+  left: 33%;
+  filter: blur(22px);
+  opacity: 0.38;
+  animation-duration: 21s;
+  animation-direction: reverse;
+}
+.hero-shaft.one {
+  width: 230px;
+  left: 18%;
+}
+
+.hero-motes {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0.55;
+  background-image: radial-gradient(circle, rgba(247, 241, 225, 0.42) 1px, transparent 1.4px),
+    radial-gradient(circle, rgba(247, 241, 225, 0.24) 1px, transparent 1.4px);
+  background-size: 120px 180px, 74px 110px;
+  animation: so-motes 13s linear infinite, so-glimmer 7s ease-in-out infinite;
+}
+
+/* ---- what stands on it */
+
+.hero-head {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  /* Full-bleed to the edges of the screen, which on a phone includes the corners the
+     hardware takes back. */
+  padding: calc(22px + env(safe-area-inset-top, 0px)) clamp(20px, 5vw, 56px) 22px;
+}
+
+.hero-head .wordmark {
+  font-size: 15px;
+  letter-spacing: 0.34em;
+}
+
+.hero-subtitle {
+  font: 400 10px/1.3 var(--sans);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hero-body {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 8px clamp(20px, 6vw, 96px) clamp(40px, 7vh, 72px);
+}
+
+.hero-panel {
+  width: 100%;
+  max-width: 520px;
+}
+
+/* Top-aligned, not centred: the login eyebrow is a long line of Greek and wraps to two
+   on a phone, and a dot floating between them reads as a bullet for the second one. */
+.hero-eyebrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-bottom: 22px;
+}
+
+.hero-dot {
+  flex: none;
+  margin-top: 1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hero-lamp);
+  animation: so-breathe 2.6s ease-in-out infinite;
+}
+
+h1.display.hero-headline {
+  font-size: clamp(31px, 3.6vw, 44px);
+  line-height: 1.06;
+  margin-bottom: 12px;
+}
+
+.hero-panel .lede {
+  margin-bottom: 24px;
+  font-size: 17px;
+  line-height: 1.58;
+  max-width: 46ch;
+}
+
+/* Both auth forms are built out of the shared controls; only these three need the
+   dark ground spelled out, because each hardcodes a colour meant for parchment. */
+.auth-hero .btn.primary {
+  background: var(--hero-lamp);
+  border-color: var(--hero-lamp);
+  color: #f7f1e1;
+}
+.auth-hero .btn.primary:hover:not(:disabled) {
+  background: #b8503b;
+  border-color: #b8503b;
+}
+.auth-hero .btn.primary:disabled {
+  background: transparent;
+  border-color: rgba(247, 241, 225, 0.26);
+  color: rgba(247, 241, 225, 0.42);
+}
+.auth-hero .btn:hover:not(:disabled) {
+  color: #302a21;
+}
+.auth-hero .progress > span {
+  background: var(--terra);
+}
+.auth-hero .warnbox {
+  border-color: rgba(var(--terra-rgb), 0.5);
+  background: rgba(160, 62, 43, 0.22);
+  color: var(--terra-deep);
+}
+
+/* An input's own background is the only thing between the text and the photograph,
+   so it lifts on focus rather than only changing its border. */
+.auth-hero .field:focus {
+  background: rgba(247, 241, 225, 0.12);
+}
+.auth-hero .field::placeholder {
+  color: rgba(247, 241, 225, 0.42);
+}
+
+/* ---- the standing claims */
+
+.hero-proof {
+  display: flex;
+  gap: clamp(14px, 2.5vw, 34px);
+  margin-top: 34px;
+}
+
+/* Equal thirds with the labels free to wrap, rather than three intrinsically-sized
+   columns: the labels are translated, and the Chinese and the English do not have to
+   agree about which of them is the long one. */
+.hero-proof-item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-left: 1px solid var(--rule);
+  padding-left: 14px;
+}
+
+.hero-proof-value {
+  font: 400 22px/1 var(--serif);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-proof-label {
+  font: 400 10px/1.3 var(--sans);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(var(--ink-rgb), 0.45);
+}
+
+/*
+ * Upright, the composition turns over: a portrait crop of the same hall, the copy
+ * resting on the bottom edge of it rather than beside it, and one shaft instead of
+ * two — at 390px the second falls straight through the headline.
+ */
+@media (max-width: 860px) {
+  .hero-art img { object-position: 50% 28%; }
+
+  .hero-scrim::before {
+    left: -24%;
+    top: auto;
+    right: -24%;
+    bottom: -16%;
+    width: auto;
+    height: 66%;
+    background: rgba(9, 8, 6, 0.84);
+    filter: blur(70px);
+  }
+
+  .hero-shaft.one { width: 150px; left: 10%; }
+  .hero-shaft.two { display: none; }
+
+  .hero-body {
+    align-items: flex-end;
+    padding: 24px clamp(20px, 6vw, 96px)
+      calc(clamp(28px, 5vh, 48px) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /*
+   * Upright there is no dark third to stand in — the copy runs the width of the frame
+   * and crosses the lit marble. So the shade is attached to the column itself and
+   * grows with it, rather than being a fixed ellipse the text can outgrow: whatever
+   * height the form ends up, the ground behind it is dark enough to read on.
+   */
+  .hero-body::before {
+    content: '';
+    position: absolute;
+    inset: -72px 0 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(11, 9, 7, 0) 0%,
+      rgba(11, 9, 7, 0.68) 20%,
+      rgba(11, 9, 7, 0.88) 100%
+    );
+  }
+
+  .hero-panel { max-width: 560px; }
+  .hero-panel .lede { font-size: 15.5px; margin-bottom: 22px; }
+
+  /* Thumb-sized, and the full width of the column: at this size the button is the
+     only thing to press and there is no reason to make it a target to aim at. */
+  .auth-hero .btn.primary {
+    width: 100%;
+    min-height: 50px;
+  }
+  .auth-hero .field { min-height: 48px; }
+}
+
+/* Below the fold on a short phone the proof row is the first thing worth losing —
+   it is a claim about the product, and the form is what the reader came for. */
+@media (max-width: 620px) {
+  .hero-proof { display: none; }
+}
+
+/* Han has no small caps and gains nothing from Latin tracking; the proof labels are
+   set the way every other eyebrow in the app is under Chinese. */
+:root[data-locale='zh'] .hero-proof-label,
+:root[data-locale='zh'] .hero-subtitle {
+  letter-spacing: 0.08em;
+}

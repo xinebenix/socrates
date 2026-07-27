@@ -36,6 +36,20 @@ export async function middleware(req: NextRequest) {
   return NextResponse.redirect(url);
 }
 
+/*
+ * Everything except the things that are already public by construction.
+ *
+ * The build output and anything served straight out of `public/` have no access control
+ * to lose — the file is on disk under a guessable URL either way — so putting the gate in
+ * front of them buys nothing and costs correctness: an unauthenticated request for the
+ * login page's own background image was answered with a redirect back to the login page,
+ * and the browser rendered a broken image on the only screen that needs it.
+ *
+ * Matched on the extension rather than on `hero/`, so the next static file added is
+ * covered without anyone having to remember this line. No route in the app ends in one.
+ */
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:webp|avif|png|jpg|jpeg|gif|svg|ico|woff2?|txt|xml)$).*)',
+  ],
 };

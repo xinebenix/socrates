@@ -4,6 +4,14 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useDict } from '@/components/I18nProvider';
 
+/**
+ * The two forms that stand on the hero image.
+ *
+ * Both are stacked fields over one full-width button rather than the inline
+ * field-and-button pair the rest of the app uses for search boxes: on a photograph the
+ * input's own translucent fill is the only thing separating the text from the picture,
+ * and a control welded to a button gives that fill an awkward shape to hold.
+ */
 export function LoginForm({ next }: { next: string }) {
   const t = useDict();
   const [email, setEmail] = useState('');
@@ -37,7 +45,7 @@ export function LoginForm({ next }: { next: string }) {
 
   return (
     <form onSubmit={submit}>
-      <div className="stack gap-6" style={{ maxWidth: 380 }}>
+      <div className="stack gap-6">
         <input
           type="email"
           className="field"
@@ -49,20 +57,24 @@ export function LoginForm({ next }: { next: string }) {
           autoComplete="username"
           aria-label={t.login.emailAriaLabel}
         />
-        <div className="inline-form">
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={t.login.passwordPlaceholder}
-            disabled={busy}
-            autoComplete="current-password"
-            aria-label={t.login.passwordAriaLabel}
-          />
-          <button type="submit" disabled={busy || !email || !password}>
-            {busy ? t.login.submitButtonBusy : t.login.submitButton}
-          </button>
-        </div>
+        <input
+          type="password"
+          className="field"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder={t.login.passwordPlaceholder}
+          disabled={busy}
+          autoComplete="current-password"
+          aria-label={t.login.passwordAriaLabel}
+        />
+        <button
+          type="submit"
+          className="btn primary"
+          disabled={busy || !email || !password}
+          style={{ alignSelf: 'flex-start', marginTop: 8 }}
+        >
+          {busy ? t.login.submitButtonBusy : t.login.submitButton}
+        </button>
       </div>
 
       {error && (
@@ -90,9 +102,20 @@ export function SignupForm({ next }: { next: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const required = [email.trim(), password, code.trim()];
+  const ready = required.every((v) => v.length > 0);
+
+  /*
+   * How much of the form is done, over the three fields that actually gate the button.
+   * The name is left out of the count on purpose: it is optional, and a bar that never
+   * reaches the end for someone who declined to give a name would be reporting a
+   * problem that does not exist.
+   */
+  const filledPct = (required.filter((v) => v.length > 0).length / required.length) * 100;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!email || !password || !code || busy) return;
+    if (!ready || busy) return;
 
     setBusy(true);
     setError(null);
@@ -115,7 +138,7 @@ export function SignupForm({ next }: { next: string }) {
 
   return (
     <form onSubmit={submit}>
-      <div className="stack gap-6" style={{ maxWidth: 380 }}>
+      <div className="stack gap-6">
         <input
           type="email"
           className="field"
@@ -155,11 +178,19 @@ export function SignupForm({ next }: { next: string }) {
           disabled={busy}
           aria-label={t.login.codeAriaLabel}
         />
+
+        {/* Decorative: it restates the state of the fields above it, which is already
+            visible, so it is hidden from the accessibility tree rather than announced
+            as a progress bar that moves whenever a character is typed. */}
+        <div className="progress" style={{ marginTop: 6 }} aria-hidden>
+          <span style={{ width: `${filledPct}%` }} />
+        </div>
+
         <span className="note">{t.login.codeNote}</span>
         <button
           type="submit"
           className="btn primary"
-          disabled={busy || !email || !password || !code}
+          disabled={busy || !ready}
           style={{ alignSelf: 'flex-start', marginTop: 6 }}
         >
           {busy ? t.login.signupButtonBusy : t.login.signupButton}

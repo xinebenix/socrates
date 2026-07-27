@@ -1,13 +1,13 @@
 # Socrates — 简体中文文案审校 / Chinese copy review
 
-**311 strings** across nine screens. For each: the English it replaces, the Chinese now shipping, and what the string is *for* — when a reader sees it and what it has to accomplish.
+**314 strings** across nine screens. For each: the English it replaces, the Chinese now shipping, and what the string is *for* — when a reader sees it and what it has to accomplish.
 
 The last column is the one to read first.
 
 | | count | what it means for review |
 |---|---|---|
 | 🟢 **From the comp** | 131 | Still verbatim `Socrates zh-CN.dc.html`. Your own copy — I changed nothing. Review only if the comp itself needs revising. |
-| 🟡 **Written to match** | 180 | The comp drew seven screens but not every state, and the product has since grown three surfaces it never drew. These were translated against the comp's own pairs as a style guide. **This is the part that needs a native reader.** |
+| 🟡 **Written to match** | 183 | The comp drew seven screens but not every state, and the product has since grown three surfaces it never drew. These were translated against the comp's own pairs as a style guide. **This is the part that needs a native reader.** |
 
 A string is green only where two independent checks agree: the record kept while translating, *and* a fresh character-for-character match against the comp file. Green tells you to skip a string, so a wrong green costs that string its review, while a wrong yellow costs you a glance. Where the two disagreed I marked it yellow.
 
@@ -428,6 +428,9 @@ Two states on one screen, toggled by the links at the bottom. It is the one plac
 | 🟡 | `signupButtonBusy` | Creating… | **正在创建……** | Busy label. |
 | 🟡 | `signupFailedFallback` | could not create the account | **无法创建账户** | Fallback error if the account cannot be created. |
 | 🟡 | `signOutButton` | Sign out | **退出登录** | Signs out. Sits in the header beside the account name. |
+| 🟡 | `proofDepthsLabel` | Depths per node | **每节点深度** | Label under the figure `6` on the landing screen. Names the depth axis to a reader who has not seen the app yet, so it has to make sense without 蓝图 or 单元 having been introduced. |
+| 🟡 | `proofGamificationLabel` | Streaks or points | **连胜与积分** | Label under the figure `0`. The claim is that there are none — an absence stated as a quantity — so it must read as a list of things not present rather than a feature name. |
+| 🟡 | `proofScheduleLabel` | Spaced return | **间隔复习** | Label under `SM-2`. Names what the algorithm does: coming back at widening intervals. 复习 is the ordinary word for it and is the right register here, even though the app avoids calling a session 复习 elsewhere. |
 
 ## Depth ladder — 深度层级
 
