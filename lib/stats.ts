@@ -11,7 +11,7 @@ import { loadCellSnapshots } from './policy/snapshot';
 import { isMastered } from './mastery/bkt';
 import {
   listBenchmarkRuns,
-  listMisconceptionsForConcept,
+  listMisconceptionsWithState,
   listNodes,
   listResponsesForConcept,
 } from './db/queries';
@@ -77,10 +77,10 @@ export interface ConceptStats {
   hasSource: boolean;
 }
 
-export function buildGrid(db: Db, conceptId: number): GridRow[] {
+export function buildGrid(db: Db, userId: number, conceptId: number): GridRow[] {
   const at = now();
   const nodes = listNodes(db, conceptId);
-  const snapshots = loadCellSnapshots(db, conceptId);
+  const snapshots = loadCellSnapshots(db, userId, conceptId);
 
   return nodes.map((n) => ({
     nodeId: n.id,
@@ -123,11 +123,11 @@ export function buildGrid(db: Db, conceptId: number): GridRow[] {
   }));
 }
 
-export function conceptStats(db: Db, conceptId: number): ConceptStats {
+export function conceptStats(db: Db, userId: number, conceptId: number): ConceptStats {
   const at = now();
-  const snapshots = loadCellSnapshots(db, conceptId);
+  const snapshots = loadCellSnapshots(db, userId, conceptId);
   const applicable = snapshots.filter((c) => c.applicable);
-  const responses = listResponsesForConcept(db, conceptId);
+  const responses = listResponsesForConcept(db, userId, conceptId);
 
   const source = db.prepare(`SELECT source_text FROM concepts WHERE id = ?`).get(conceptId) as
     | { source_text: string | null }
@@ -135,30 +135,34 @@ export function conceptStats(db: Db, conceptId: number): ConceptStats {
 
   return {
     conceptId,
-    grid: buildGrid(db, conceptId),
+    grid: buildGrid(db, userId, conceptId),
     coverage: coverage(snapshots),
     frontier: frontierDepth(snapshots),
     dueCount: applicable.filter((c) => isDue(c.nextDueAt, at)).length,
     applicableCells: applicable.length,
     masteredCells: applicable.filter(cellMastered).length,
     totalResponses: responses.length,
-    misconceptionProfile: misconceptionProfile(db, conceptId),
-    dueForecast: dueForecast(db, conceptId, 14),
-    retention: retentionSeries(db, conceptId),
-    benchmarkHistory: benchmarkHistory(db, conceptId),
+    misconceptionProfile: misconceptionProfile(db, userId, conceptId),
+    dueForecast: dueForecast(db, userId, conceptId, 14),
+    retention: retentionSeries(db, userId, conceptId),
+    benchmarkHistory: benchmarkHistory(db, userId, conceptId),
     hasSource: Boolean(source?.source_text && source.source_text.trim().length > 0),
   };
 }
 
-export function misconceptionProfile(db: Db, conceptId: number): MisconceptionProfileEntry[] {
-  const all = listMisconceptionsForConcept(db, conceptId);
+export function misconceptionProfile(
+  db: Db,
+  userId: number,
+  conceptId: number
+): MisconceptionProfileEntry[] {
+  const all = listMisconceptionsWithState(db, userId, conceptId);
 
   const recent = db
     .prepare(
       `WITH recent AS (
          SELECT r.chosen_option_id
            FROM responses r JOIN cells c ON c.id = r.cell_id JOIN nodes n ON n.id = c.node_id
-          WHERE n.concept_id = ?
+          WHERE n.concept_id = ? AND r.user_id = ?
           ORDER BY r.answered_at DESC, r.id DESC LIMIT 20
        )
        SELECT o.misconception_id AS id, COUNT(*) AS hits
@@ -166,7 +170,7 @@ export function misconceptionProfile(db: Db, conceptId: number): MisconceptionPr
         WHERE o.is_correct = 0 AND o.misconception_id IS NOT NULL
         GROUP BY o.misconception_id`
     )
-    .all(conceptId) as { id: number; hits: number }[];
+    .all(conceptId, userId) as { id: number; hits: number }[];
 
   const recentMap = new Map(recent.map((r) => [r.id, r.hits]));
   const nodeTitles = new Map(listNodes(db, conceptId).map((n) => [n.id, n.title]));
@@ -193,9 +197,14 @@ export function misconceptionProfile(db: Db, conceptId: number): MisconceptionPr
     );
 }
 
-export function dueForecast(db: Db, conceptId: number, days: number): DueForecastDay[] {
+export function dueForecast(
+  db: Db,
+  userId: number,
+  conceptId: number,
+  days: number
+): DueForecastDay[] {
   const at = now();
-  const snapshots = loadCellSnapshots(db, conceptId).filter((c) => c.applicable);
+  const snapshots = loadCellSnapshots(db, userId, conceptId).filter((c) => c.applicable);
 
   const buckets: DueForecastDay[] = [];
   for (let i = 0; i < days; i++) {
@@ -219,8 +228,8 @@ export function dueForecast(db: Db, conceptId: number, days: number): DueForecas
  * that saw activity gets a point, using the model's belief after each response and
  * the decay applied since.
  */
-export function retentionSeries(db: Db, conceptId: number): RetentionPoint[] {
-  const responses = listResponsesForConcept(db, conceptId);
+export function retentionSeries(db: Db, userId: number, conceptId: number): RetentionPoint[] {
+  const responses = listResponsesForConcept(db, userId, conceptId);
   if (responses.length === 0) return [];
 
   const byDay = new Map<string, { sum: number; n: number }>();
@@ -241,8 +250,8 @@ export function retentionSeries(db: Db, conceptId: number): RetentionPoint[] {
     }));
 }
 
-export function benchmarkHistory(db: Db, conceptId: number) {
-  return listBenchmarkRuns(db, conceptId).map((run) => {
+export function benchmarkHistory(db: Db, userId: number, conceptId: number) {
+  return listBenchmarkRuns(db, userId, conceptId).map((run) => {
     let overall = 0;
     const byDepth: Record<string, number> = {};
     try {
@@ -262,9 +271,11 @@ export function benchmarkHistory(db: Db, conceptId: number) {
 }
 
 /** Cells sorted by urgency — used by the worker to decide what to pre-generate. */
-export function plausiblyDueCells(db: Db, conceptId: number, limit: number) {
+export function plausiblyDueCells(db: Db, userId: number, conceptId: number, limit: number) {
   const at = now();
-  const snapshots = loadCellSnapshots(db, conceptId).filter((c) => c.applicable && c.depth <= 5);
+  const snapshots = loadCellSnapshots(db, userId, conceptId).filter(
+    (c) => c.applicable && c.depth <= 5
+  );
   const frontier = frontierDepth(snapshots);
 
   return snapshots

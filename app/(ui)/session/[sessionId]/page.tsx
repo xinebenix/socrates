@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getDb } from '@/lib/db';
 import { getConcept, getSession } from '@/lib/db/queries';
+import { requireUser } from '@/lib/session';
 import { Topbar } from '@/components/Chrome';
 import { SessionRunner } from '@/components/SessionRunner';
 import { getDict } from '@/lib/i18n/server';
@@ -19,8 +20,10 @@ export default async function SessionPage({
   if (!Number.isFinite(sessionId)) notFound();
 
   const db = getDb();
+  const user = await requireUser();
   const session = getSession(db, sessionId);
-  if (!session) notFound();
+  // Not yours is indistinguishable from not there. The API says the same.
+  if (!session || session.user_id !== user.id) notFound();
 
   const concept = getConcept(db, session.concept_id);
   if (!concept) notFound();

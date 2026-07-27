@@ -9,7 +9,14 @@
  */
 
 import { getDb } from '../lib/db';
-import { createConcept, createNode, upsertMisconception } from '../lib/db/queries';
+import {
+  createConcept,
+  createNode,
+  createUser,
+  getUserByEmail,
+  upsertMisconception,
+} from '../lib/db/queries';
+import { hashPasswordSync } from '../lib/password';
 import { persistMcItem } from '../lib/pipeline/generateItem';
 import { submitMcResponse } from '../lib/pipeline/respond';
 import { startSession } from '../lib/pipeline/session';
@@ -73,7 +80,18 @@ setClock(clock);
 
 const db = getDb();
 
-const concept = createConcept(db, {
+// Accounts exist now, so a seed has to belong to one. This is the account the demo logs
+// in as; it is not the migration's owner and carries a throwaway password on purpose.
+const demoUser =
+  getUserByEmail(db, 'demo@localhost') ??
+  createUser(db, {
+    email: 'demo@localhost',
+    passwordHash: hashPasswordSync('demo-password'),
+    displayName: 'Demo',
+  });
+
+const { concept } = createConcept(db, {
+  userId: demoUser.id,
   name: 'Socialism',
   sourceText:
     'Social ownership is ownership of the means of production by society as a whole. It is ' +
@@ -140,7 +158,7 @@ const items = nodeIds.map((nodeId, i) => {
 });
 
 // A short history: mostly right, with one belief selected twice so remediation kicks in.
-const session = startSession(db, concept.id, { length: 20 });
+const session = startSession(db, demoUser.id, concept.id, { length: 20 });
 
 items.forEach((item, i) => {
   const options = db
@@ -178,5 +196,6 @@ submitMcResponse(db, {
 db.prepare(`UPDATE items SET frozen = 1 WHERE id = ?`).run(items[0].id);
 
 console.log(`seeded concept ${concept.id} (${concept.name}) with ${nodeIds.length} nodes`);
+console.log(`  sign in as demo@localhost / demo-password`);
 console.log(`  items: ${items.length}, one promoted to the benchmark set`);
 console.log(`  db: ${process.env.GYM_DB ?? './data/gym.db'}`);

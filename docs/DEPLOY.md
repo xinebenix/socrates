@@ -24,12 +24,26 @@ runs *inside* the web process via `instrumentation.ts`. Consequence: **the servi
 stay at one replica.** Two replicas would be two writers on one volume and two workers
 racing to fill the same buffer. `railway.json` pins `numReplicas: 1`.
 
+Accounts do not change that, and it is worth being clear about what it costs now that
+more than one person is on the box. The ceiling is concurrency, not correctness: one
+process, `better-sqlite3` synchronous so every query blocks the event loop, and
+`lib/pipeline/cellLock.ts` keeping a module-scoped map of which cells are mid-generation
+that is only correct with a single writer. That is comfortable for tens of accounts and
+is the thing to revisit — by moving to Postgres, not by raising the replica count —
+before it is hundreds.
+
 **There was no authentication.** On localhost that was a reasonable reading of the
 spec. On a public URL it means anyone with the link can spend your Anthropic credits —
 a blueprint generation is one large Opus call — and read and edit your entire learning
-record. There is now a password gate in middleware, covering every page and API route.
-It **fails closed**: with no `GYM_PASSWORD` and no explicit `GYM_ALLOW_PUBLIC=1`, the
-app returns 503 rather than coming up open.
+record. There are now accounts, enforced in middleware across every page and API route.
+It **fails closed**: with no `GYM_SESSION_SECRET` the app returns 503 rather than coming
+up with authentication that looks present and is not.
+
+**Upgrading from the single-user build is a one-way migration.** The mastery estimate and
+SM-2 schedule used to live on the `cells` row; they now live in `user_cell_state`, keyed
+by account, and the old columns are dropped on first boot. The data is moved before they
+go — but it is moved once, and there is no path back. **Copy `gym.db` off the volume
+before you deploy this build.** Step 0 below.
 
 **The schema was read from disk at runtime.** `lib/db/schema.sql` was loaded via
 `process.cwd()`, which works only while the whole repo sits next to the server. It is
@@ -38,14 +52,38 @@ cannot produce a server that starts fine and then fails on first query.
 
 ---
 
+## 0. If this deployment is already running, back the database up first
+
+Only for an existing deployment on the single-user build. A new one can skip to step 1.
+
+```bash
+railway ssh
+cp /data/gym.db /data/gym.db.pre-accounts
+cp /data/gym.db-wal /data/gym.db-wal.pre-accounts 2>/dev/null || true
+```
+
+The first boot on this build moves your whole learning record onto an owner account and
+then drops the columns it came from. If that goes wrong, this copy is the only way back.
+
+Keep `GYM_PASSWORD` set to whatever it is now: the migration mints the owner account with
+that password, so you log in with the credential you already have. If it is unset and
+there is data to migrate, the app **refuses to start** rather than putting your record
+behind a password nobody knows — set it and restart.
+
 ## 1. Generate the two secrets
 
 Keep these somewhere you can find them again.
 
 ```bash
-openssl rand -base64 24   # GYM_PASSWORD    — what you type to log in
-openssl rand -hex 32      # GYM_HEALTH_TOKEN — read-only, unlocks /api/health only
+openssl rand -base64 48   # GYM_SESSION_SECRET — signs session cookies
+openssl rand -base64 24   # GYM_PASSWORD       — the registration code for new accounts
+openssl rand -hex 32      # GYM_HEALTH_TOKEN   — read-only, unlocks /api/health only
 ```
+
+`GYM_PASSWORD` is no longer a login. It is required once, at `/signup`, to open an
+account, and never again. Give it to the people who should have one. Leaving it unset
+means nobody can sign up, which is the right default for a deployment that already has
+its accounts.
 
 The health token is deliberately weaker than the password: it reaches the diagnostics
 endpoint and nothing else — not pages, not data, not generation. That is what makes it
@@ -65,14 +103,20 @@ expected** — no variables are set yet, so the app is correctly refusing to ser
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
+GYM_SESSION_SECRET=<from step 1>
 GYM_PASSWORD=<from step 1>
 GYM_HEALTH_TOKEN=<from step 1>
+GYM_OWNER_EMAIL=you@example.com
 GYM_DB=/data/gym.db
 GYM_MODEL=claude-opus-5
 GYM_BUFFER_TARGET=3
 GYM_WORKER_INTERVAL_MS=60000
+GYM_ACTIVE_USER_WINDOW_DAYS=30
 NODE_ENV=production
 ```
+
+`GYM_OWNER_EMAIL` is only read when migrating an existing database — it names the account
+that inherits everything, and defaults to `owner@localhost`.
 
 `GYM_DB=/data/gym.db` matters. If it stays at the default `./data/gym.db` the database
 lands on the container filesystem and disappears on the next deploy.
@@ -101,7 +145,7 @@ behaves oddly:
 | Start command | `npm run start` | |
 | Health check path | `/api/health/live` | unauthenticated by design — it returns `{"ok":true}` and nothing else, so Railway can probe it without a cookie |
 | Health check timeout | 180s | the first boot runs migrations |
-| Replicas | **1** | SQLite on one volume, one in-process worker |
+| Replicas | **1** | SQLite on one volume, one in-process worker — see below |
 | Restart policy | on failure, max 5 | |
 
 ## 6. Deploy and generate a domain
@@ -122,18 +166,25 @@ curl -s https://$DOMAIN/api/health -H "Authorization: Bearer $TOKEN" | jq
 The four things to read first:
 
 ```jsonc
-"config":  { "anthropicKeyPresent": true, "passwordConfigured": true }
+"config":  { "anthropicKeyPresent": true, "sessionSecretConfigured": true, "accounts": 1 }
 "storage": { "dbOnVolume": true, "writable": true }   // no "warning" key
 "database":{ "integrity": "ok" }
 "worker":  { "running": true }
 ```
+
+On an upgrade, `accounts` should read 1 and `concepts` should list everything you had,
+each with `learners: 1`. If `accounts` is 0 and you expected a migration, the database
+was empty or the migration has not run — check the logs before entering anything.
 
 If `storage` has a `warning`, stop and fix it before entering any data — you are about
 to lose it.
 
 ## 8. Log in and use it
 
-Open `https://$DOMAIN`, enter `GYM_PASSWORD`. The session cookie is HttpOnly, Secure,
+Open `https://$DOMAIN`. On a fresh deployment, go to `/signup` and create an account with
+`GYM_PASSWORD` as the registration code. On an upgraded one, sign in with
+`GYM_OWNER_EMAIL` and the `GYM_PASSWORD` you already had — the migration made that
+account for you, and everything you had recorded belongs to it. The session cookie is HttpOnly, Secure,
 and lasts 30 days.
 
 First real run: create a concept **with source text pasted in**. Blueprint generation
@@ -209,7 +260,11 @@ command, paste the output, I read it. Slower, and fine.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Every page returns 503 with "Socrates is not configured" | `GYM_PASSWORD` unset — the gate failing closed, working as intended | set it and redeploy |
+| Every page returns 503 with "Socrates is not configured" | `GYM_SESSION_SECRET` unset — the gate failing closed, working as intended | set it and redeploy |
+| The app refuses to boot with "multi-user Socrates needs an account to attach them to" | upgrading a database that has concepts in it, with `GYM_PASSWORD` unset. The migration will not put your record behind a login nobody has | set `GYM_PASSWORD` to what the owner account should use, and restart |
+| Signed in fine yesterday, redirected to `/login` today, everybody at once | `GYM_SESSION_SECRET` changed. Every cookie was signed with the old one | expected; sign in again. Nothing is lost — the secret signs sessions and nothing else |
+| Signup returns 503, "no registration code set" | `GYM_PASSWORD` unset. This is the safe default: nobody new can open an account and start spending | set it if you want to add people, leave it if you do not |
+| Your mastery grid is empty after upgrading | you are signed in as a different account from the one the migration created | sign in as `GYM_OWNER_EMAIL` (default `owner@localhost`). `config.accounts` in the health payload says how many exist |
 | Deploy succeeds, health check fails | app is 503-ing; `/api/health/live` should still return 200 | check variables are actually on the service, not the project |
 | Data vanishes after a deploy | no volume, or `GYM_DB` points outside it | attach the volume, set `GYM_DB=/data/gym.db`; `storage.warning` in the health payload says which |
 | Build fails on `node-gyp rebuild` / "Could not find any Python installation" while installing `better-sqlite3` | Nixpacks picked Node 18, which is below `better-sqlite3`'s `>=22` floor, so no prebuilt binary matched and npm fell back to compiling — and the stock image has no Python. The Python error is the symptom; the Node version is the cause | already fixed in the repo: `"engines": { "node": "22.x" }` plus `.nvmrc`, and a `nixpacks.toml` adding `python3`, `gcc`, `gnumake` in case the gyp path is taken anyway. If you see it, confirm both files are on the deployed commit |

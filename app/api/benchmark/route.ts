@@ -1,15 +1,17 @@
 import { getDb } from '@/lib/db';
 import { listBenchmarkRuns, listFrozenItems } from '@/lib/db/queries';
 import { benchmarkCoverage, startBenchmarkRun } from '@/lib/pipeline/benchmark';
-import { fail, ok, requireNum } from '../_shared';
+import { fail, ok, readable, requireNum, requireUserId } from '../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
   try {
+    const userId = await requireUserId();
     const conceptId = requireNum(new URL(req.url).searchParams.get('conceptId'), 'conceptId');
     const db = getDb();
+    readable(db, userId, conceptId);
 
     return ok({
       frozen: listFrozenItems(db, conceptId).map((i) => ({
@@ -20,7 +22,7 @@ export async function GET(req: Request) {
         servedCount: i.served_count,
       })),
       coverage: benchmarkCoverage(db, conceptId),
-      history: listBenchmarkRuns(db, conceptId).map((r) => ({
+      history: listBenchmarkRuns(db, userId, conceptId).map((r) => ({
         id: r.id,
         runAt: r.run_at,
         results: JSON.parse(r.results_json) as unknown,
@@ -34,9 +36,12 @@ export async function GET(req: Request) {
 /** Start a benchmark run. Frozen items only, no feedback until the run completes. */
 export async function POST(req: Request) {
   try {
+    const userId = await requireUserId();
     const body = (await req.json()) as { conceptId?: number };
     const conceptId = requireNum(body.conceptId, 'conceptId');
-    const plan = startBenchmarkRun(getDb(), conceptId);
+    const db = getDb();
+    readable(db, userId, conceptId);
+    const plan = startBenchmarkRun(db, userId, conceptId);
     return ok(plan, 201);
   } catch (err) {
     return fail(err);

@@ -1,5 +1,4 @@
 import { getDb } from '@/lib/db';
-import { getSession } from '@/lib/db/queries';
 import { isConfidence, type Confidence } from '@/lib/mastery/bkt';
 import {
   submitDontKnowResponse,
@@ -8,7 +7,7 @@ import {
 } from '@/lib/pipeline/respond';
 import { finalizeBenchmarkRun, isBenchmarkComplete } from '@/lib/pipeline/benchmark';
 import { sessionProgress } from '@/lib/pipeline/session';
-import { bad, fail, ok, requireNum } from '../../../_shared';
+import { bad, fail, ok, ownedSession, requireNum, requireUserId } from '../../../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,12 +23,15 @@ export const maxDuration = 300;
  */
 export async function POST(req: Request, ctx: { params: Promise<{ sessionId: string }> }) {
   try {
+    const userId = await requireUserId();
     const { sessionId: raw } = await ctx.params;
     const sessionId = requireNum(raw, 'sessionId');
 
     const db = getDb();
-    const session = getSession(db, sessionId);
-    if (!session) return bad('session not found', 404);
+    // Ownership, not just existence. Session ids are sequential integers, so without
+    // this any signed-in account could answer into somebody else's record — and
+    // invariant 2 means those responses could never be taken back out.
+    const session = ownedSession(db, userId, sessionId);
     if (session.ended_at) return bad('session has already ended', 409);
 
     const body = (await req.json()) as {

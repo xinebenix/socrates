@@ -16,6 +16,7 @@ import {
   createSession,
   endSession,
   getCell,
+  getSession,
   insertBenchmarkRun,
   listFrozenItems,
   listResponsesForSession,
@@ -28,7 +29,7 @@ export interface BenchmarkPlan {
   warning: string | null;
 }
 
-export function startBenchmarkRun(db: Db, conceptId: number): BenchmarkPlan {
+export function startBenchmarkRun(db: Db, userId: number, conceptId: number): BenchmarkPlan {
   const frozen = listFrozenItems(db, conceptId);
   if (frozen.length === 0) {
     throw new Error(
@@ -40,7 +41,7 @@ export function startBenchmarkRun(db: Db, conceptId: number): BenchmarkPlan {
     frozen.map((i) => ({ nodeId: i.node_id, itemId: i.id, cellId: i.cell_id }))
   );
 
-  const session = createSession(db, conceptId, 'benchmark');
+  const session = createSession(db, userId, conceptId, 'benchmark');
 
   const stmt = db.prepare(
     `INSERT INTO session_plan (session_id, position, cell_id, item_id, slot_kind)
@@ -114,7 +115,9 @@ export function finalizeBenchmarkRun(db: Db, sessionId: number, conceptId: numbe
   };
 
   endSession(db, sessionId);
-  const run = insertBenchmarkRun(db, conceptId, results);
+  const session = getSession(db, sessionId);
+  if (!session) throw new Error(`session ${sessionId} not found`);
+  const run = insertBenchmarkRun(db, session.user_id, conceptId, results);
   return { run, results };
 }
 

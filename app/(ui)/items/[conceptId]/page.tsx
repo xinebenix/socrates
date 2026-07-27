@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getDb } from '@/lib/db';
-import { getConcept } from '@/lib/db/queries';
+import { canReadConcept, getConcept } from '@/lib/db/queries';
+import { requireUser } from '@/lib/session';
 import {
   cellStats,
   deadDistractors,
@@ -25,8 +26,9 @@ export default async function ItemsPage({
   if (!Number.isFinite(conceptId)) notFound();
 
   const db = getDb();
+  const user = await requireUser();
   const concept = getConcept(db, conceptId);
-  if (!concept) notFound();
+  if (!concept || !canReadConcept(concept, user.id)) notFound();
 
   const cells = cellStats(db, conceptId);
   const dead = deadDistractors(db, conceptId);

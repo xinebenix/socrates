@@ -11,9 +11,16 @@ export interface ConceptSummary {
   name: string;
   hasSource: boolean;
   sourceNote: string | null;
+  shared: boolean;
   nodeCount: number;
   coverage: number;
   dueCount: number;
+}
+
+export interface LibraryEntry {
+  id: number;
+  name: string;
+  bankSize: number;
 }
 
 export function NewConceptForm() {
@@ -43,6 +50,16 @@ export function NewConceptForm() {
       if (!res.ok) throw new Error(data.error ?? t.concepts.errorCreateFailed);
 
       const conceptId = data.concept.id as number;
+
+      // Somebody has already decomposed this topic, so there is nothing to generate —
+      // the blueprint and the item bank come with it and only the progress starts at
+      // zero. Straight to the dashboard, and say what happened rather than letting a
+      // stranger's map appear as though it were yours.
+      if (data.joined) {
+        router.push(`/dashboard/${conceptId}`);
+        return;
+      }
+
       setStatus(t.concepts.statusDecomposing);
 
       const bp = await fetch('/api/blueprint', {
@@ -180,7 +197,7 @@ export function ConceptList({ concepts }: { concepts: ConceptSummary[] }) {
 
           {!c.hasSource && (
             <span className="note" style={{ color: 'var(--terra)' }}>
-              {t.concepts.degradedModeNote}
+              {c.shared ? t.concepts.sharedConceptNote : t.concepts.degradedModeNote}
             </span>
           )}
 
@@ -248,6 +265,73 @@ export function StartButton({
         <span className="note" style={{ color: 'var(--terra)' }}>
           {error}
         </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * Concepts somebody else has already built.
+ *
+ * Joining one is the cheapest thing in the app: the blueprint is one large Opus call and
+ * a stocked concept is dozens more, and this is a row. Only sourceless concepts appear
+ * here — a concept grounded in somebody's own material is theirs and never listed.
+ */
+export function SharedLibrary({ concepts }: { concepts: LibraryEntry[] }) {
+  const t = useDict();
+  const router = useRouter();
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function join(entry: LibraryEntry) {
+    setBusy(entry.id);
+    setError(null);
+    try {
+      // Creating by the same name is the join: the API matches the normalised name and
+      // hands back the existing concept rather than building a second one.
+      const res = await fetch('/api/concepts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: entry.name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? t.concepts.errorCreateFailed);
+      router.push(`/dashboard/${data.concept.id as number}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(null);
+    }
+  }
+
+  return (
+    <>
+      <div
+        className="grid-tiles"
+        style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}
+      >
+        {concepts.map((c) => (
+          <div className="tile" key={c.id} style={{ gap: 12 }}>
+            <span style={{ font: "400 22px/1.15 var(--serif)", color: 'var(--ink)' }}>{c.name}</span>
+            <span className="eyebrow tabular">
+              {fill(t.concepts.libraryBankSize, { count: c.bankSize })}
+            </span>
+            <div className="row wrap gap-6" style={{ marginTop: 4 }}>
+              <button
+                type="button"
+                className="btn small primary"
+                disabled={busy !== null}
+                onClick={() => void join(c)}
+              >
+                {busy === c.id ? t.concepts.libraryJoinButtonBusy : t.concepts.libraryJoinButton}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {error && (
+        <p className="note" style={{ color: 'var(--terra)', marginTop: 10 }}>
+          {error}
+        </p>
       )}
     </>
   );

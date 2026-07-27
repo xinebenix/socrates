@@ -6,12 +6,35 @@ export type ItemKind = 'mc' | 'free';
 export type SessionKind = 'practice' | 'benchmark';
 export type SlotKind = 'remediation' | 'due' | 'frontier' | 'benchmark' | 'd6';
 
+/** Sourceless concepts are shared and joinable by name; sourced ones are their owner's. */
+export type Visibility = 'shared' | 'private';
+
+export interface UserRow {
+  id: number;
+  email: string;
+  password_hash: string;
+  display_name: string | null;
+  created_at: string;
+  last_seen_at: string | null;
+}
+
 export interface ConceptRow {
   id: number;
   name: string;
+  name_key: string;
+  owner_id: number | null;
+  visibility: Visibility;
+  forked_from: number | null;
   source_text: string | null;
   source_note: string | null;
   created_at: string;
+}
+
+export interface UserConceptRow {
+  user_id: number;
+  concept_id: number;
+  joined_at: string;
+  last_active_at: string;
 }
 
 export interface NodeRow {
@@ -24,11 +47,20 @@ export interface NodeRow {
   origin: NodeOrigin;
 }
 
+/** Content: which (node, depth) pairs exist and which are worth testing. */
 export interface CellRow {
   id: number;
   node_id: number;
   depth: number;
   applicable: number;
+}
+
+/**
+ * Progress: one learner's estimate of, and schedule for, one cell. Absent until they
+ * answer something on it — readers fill in the defaults rather than the table doing it,
+ * so joining a concept writes nothing.
+ */
+export interface CellState {
   p_mastery: number;
   response_count: number;
   consecutive_correct: number;
@@ -38,14 +70,23 @@ export interface CellRow {
   ease: number;
 }
 
+export interface UserCellStateRow extends CellState {
+  user_id: number;
+  cell_id: number;
+}
+
 export interface MisconceptionRow {
   id: number;
   node_id: number;
   label: string;
   description: string;
   origin: MisconceptionOrigin;
-  times_selected: number;
   created_at: string;
+}
+
+/** A misconception with one learner's selection count — the misconception profile. */
+export interface MisconceptionWithState extends MisconceptionRow {
+  times_selected: number;
 }
 
 export interface ItemRow {
@@ -76,6 +117,7 @@ export interface OptionRow {
 
 export interface SessionRow {
   id: number;
+  user_id: number;
   concept_id: number;
   started_at: string;
   ended_at: string | null;
@@ -84,6 +126,7 @@ export interface SessionRow {
 
 export interface ResponseRow {
   id: number;
+  user_id: number;
   session_id: number;
   item_id: number;
   cell_id: number;
@@ -110,13 +153,19 @@ export interface SessionPlanRow {
 
 export interface BenchmarkRunRow {
   id: number;
+  user_id: number;
   concept_id: number;
   run_at: string;
   results_json: string;
 }
 
-/** A cell joined to the node it belongs to — the unit the policy layer reasons about. */
-export interface CellWithNode extends CellRow {
+/**
+ * A cell joined to the node it belongs to and to one learner's state — the unit the
+ * policy layer reasons about. The state half is filled from `user_cell_state` where a
+ * row exists and from the defaults where it does not, so this shape is the same whether
+ * the learner has been here before or arrived a second ago.
+ */
+export interface CellWithNode extends CellRow, CellState {
   node_title: string;
   node_order: number;
   concept_id: number;

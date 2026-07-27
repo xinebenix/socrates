@@ -7,7 +7,7 @@ import { opsCounts, recentOps } from '@/lib/ops';
 import { workerStatus } from '@/lib/pipeline/workerLoop';
 import { STRONG_FROM_DEPTH, effortFor, model, modelFor, strategyName } from '@/lib/llm/client';
 import { bufferConcurrency, bufferTarget, refillThreshold } from '@/lib/pipeline/buffer';
-import { listConcepts } from '@/lib/db/queries';
+import { countUsers } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
 import { batchingEnabled } from '@/lib/llm/batch';
 import {
@@ -42,9 +42,8 @@ export async function GET(req: Request) {
     ?.slice(SESSION_COOKIE.length + 1);
 
   const authorized =
-    (await verifySession(config.password, cookie ?? null, Date.now())) ||
-    (await healthTokenMatches(config, req.headers.get('authorization'))) ||
-    (!config.password && config.allowPublic);
+    Boolean(await verifySession(config.sessionSecret, cookie ?? null, Date.now())) ||
+    (await healthTokenMatches(config, req.headers.get('authorization')));
 
   if (!authorized) {
     return NextResponse.json({ error: 'not authenticated' }, { status: 401 });
@@ -76,9 +75,10 @@ export async function GET(req: Request) {
       // Booleans, never values.
       anthropicKeyPresent: Boolean(process.env.ANTHROPIC_API_KEY),
       model: model(),
-      passwordConfigured: Boolean(config.password),
-      allowPublic: config.allowPublic,
+      sessionSecretConfigured: Boolean(config.sessionSecret),
+      signupCodeConfigured: Boolean(config.signupCode),
       healthTokenConfigured: Boolean(config.healthToken),
+      accounts: 0,
       bufferTarget: bufferTarget(),
       workerDisabled: process.env.GYM_DISABLE_WORKER === '1',
     },
@@ -97,17 +97,36 @@ export async function GET(req: Request) {
       pageCount: db.pragma('page_count', { simple: true }) as number,
     };
 
-    report.concepts = listConcepts(db).map((c) => {
+    (report.config as Record<string, unknown>).accounts = countUsers(db);
+
+    // Every concept, not one account's — this is the operator's view. `bufferedItems`
+    // is the bank as a whole rather than what any one learner has left unseen, which is
+    // the number that answers "is the worker keeping up".
+    report.concepts = (
+      db.prepare(`SELECT id, name, visibility FROM concepts ORDER BY id`).all() as {
+        id: number;
+        name: string;
+        visibility: string;
+      }[]
+    ).map((c) => {
       const buffered = db
         .prepare(
           `SELECT COUNT(*) AS n FROM items i
              JOIN cells cl ON cl.id = i.cell_id
              JOIN nodes n ON n.id = cl.node_id
-            WHERE n.concept_id = ? AND i.validated = 1 AND i.frozen = 0
-              AND i.retired = 0 AND i.served_count = 0`
+            WHERE n.concept_id = ? AND i.validated = 1 AND i.frozen = 0 AND i.retired = 0`
         )
         .get(c.id) as { n: number };
-      return { id: c.id, name: c.name, bufferedItems: buffered.n };
+      const learners = db
+        .prepare(`SELECT COUNT(*) AS n FROM user_concepts WHERE concept_id = ?`)
+        .get(c.id) as { n: number };
+      return {
+        id: c.id,
+        name: c.name,
+        visibility: c.visibility,
+        learners: learners.n,
+        bankSize: buffered.n,
+      };
     });
 
     // Generation latency, so "it feels slow" can be checked rather than debated.

@@ -76,7 +76,7 @@ describe('call-site attribution', () => {
   });
 
   it('rolls up per model before summing, so a mixed kind is priced correctly', () => {
-    const { db } = makeFixture(1);
+    const { db, userId } = makeFixture(1);
 
     // One item written by Sonnet, its validation done by Opus. Same 'kind' bucket?
     // No — different kinds, but both are per-item spend and priced per model.
@@ -93,7 +93,7 @@ describe('call-site attribution', () => {
   });
 
   it('counts every call, including schema retries', () => {
-    const { db } = makeFixture(1);
+    const { db, userId } = makeFixture(1);
     for (let i = 0; i < 3; i++) {
       recordUsage(db, { name: 'item-mc-d1', model: 'claude-sonnet-5', usage: usage(1000, 500), ms: 5 });
     }
@@ -101,7 +101,7 @@ describe('call-site attribution', () => {
   });
 
   it('reports zero rather than throwing when nothing has been spent', () => {
-    const { db } = makeFixture(1);
+    const { db, userId } = makeFixture(1);
     const total = totalSpend(db);
     expect(total.calls).toBe(0);
     expect(total.estimatedUsd).toBe(0);
@@ -111,7 +111,7 @@ describe('call-site attribution', () => {
 
 describe('the budget', () => {
   it('is absent unless configured', () => {
-    const { db } = makeFixture(1);
+    const { db, userId } = makeFixture(1);
     const status = budgetStatus(db);
     expect(status.limitUsd).toBeNull();
     expect(status.exceeded).toBe(false);
@@ -119,7 +119,7 @@ describe('the budget', () => {
   });
 
   it('trips once the month s estimate reaches the limit', () => {
-    const { db } = makeFixture(1);
+    const { db, userId } = makeFixture(1);
     process.env.GYM_MONTHLY_BUDGET_USD = '10';
 
     recordUsage(db, { name: 'blueprint', model: 'claude-opus-5', usage: usage(0, 100_000), ms: 10 });
@@ -133,7 +133,7 @@ describe('the budget', () => {
   });
 
   it('ignores a nonsensical limit rather than locking the app', () => {
-    const { db } = makeFixture(1);
+    const { db, userId } = makeFixture(1);
     for (const bad of ['0', '-5', 'lots', '']) {
       process.env.GYM_MONTHLY_BUDGET_USD = bad;
       expect(budgetStatus(db).limitUsd).toBeNull();

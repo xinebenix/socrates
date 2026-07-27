@@ -1,23 +1,22 @@
 import { getDb } from '@/lib/db';
-import { getConcept } from '@/lib/db/queries';
 import { conceptStats } from '@/lib/stats';
 import { blueprintAlarm, cellStats, deadDistractors, nodeHealth } from '@/lib/analysis/itemStats';
-import { bad, fail, ok, requireNum } from '../_shared';
+import { fail, ok, readable, requireNum, requireUserId } from '../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
   try {
+    const userId = await requireUserId();
     const url = new URL(req.url);
     const conceptId = requireNum(url.searchParams.get('conceptId'), 'conceptId');
     const includeItemHealth = url.searchParams.get('itemHealth') === '1';
 
     const db = getDb();
-    const concept = getConcept(db, conceptId);
-    if (!concept) return bad('concept not found', 404);
+    const concept = readable(db, userId, conceptId);
 
-    const stats = conceptStats(db, conceptId);
+    const stats = conceptStats(db, userId, conceptId);
 
     return ok({
       concept: { id: concept.id, name: concept.name, sourceNote: concept.source_note },
@@ -28,12 +27,15 @@ export async function GET(req: Request) {
             cells: cellStats(db, conceptId),
             deadDistractors: deadDistractors(db, conceptId),
             nodes: nodeHealth(db, conceptId),
-            // Limitation 1: with one user these estimates are noisy. Say so.
+            // Limitation 1, weakened but not gone. Classical item analysis assumes
+            // many test-takers, and a shared bank finally has some — these counts are
+            // administrations across everybody, not just you. They are still thin
+            // until a cell has actually been seen by several people.
             advisory:
-              'Single-user statistics are thin. Classical item analysis assumes many ' +
-              'test-takers; with one user and a handful of administrations per cell these ' +
-              'estimates are noisy. They are aggregated at the cell level, hidden below ' +
-              'n = 5, and advisory only.',
+              'Item statistics are aggregated across everyone training on this concept, ' +
+              'not just you. Classical item analysis assumes many test-takers, so these ' +
+              'estimates are noisy until a cell has had a number of administrations. They ' +
+              'are aggregated at the cell level, hidden below n = 5, and advisory only.',
           }
         : null,
     });

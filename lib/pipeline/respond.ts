@@ -14,14 +14,29 @@ import { buildGradeFreeCall, FREE_PASS_THRESHOLD, scoreFromCriteria } from '../p
 import type { GraderVerdict, ItemRow, OptionRow, ResponseRow, RubricCriterion } from '../db/types';
 import {
   getCell,
+  getCellState,
   getItem,
   getNode,
+  getSession,
   incrementMisconceptionSelected,
   incrementOptionSelected,
   insertResponse,
   listOptions,
   updateCellAfterResponse,
 } from '../db/queries';
+
+/**
+ * Whose response this is.
+ *
+ * Taken from the session rather than passed in, so there is no argument a caller could
+ * get wrong and no path by which a response lands on someone else's record. The routes
+ * separately check that the caller owns the session before they get this far.
+ */
+function responder(db: Db, sessionId: number): number {
+  const session = getSession(db, sessionId);
+  if (!session) throw new Error(`session ${sessionId} not found`);
+  return session.user_id;
+}
 
 export interface McSubmission {
   sessionId: number;
@@ -61,8 +76,11 @@ export function submitMcResponse(db: Db, input: McSubmission): McFeedback {
   const chosen = options.find((o) => o.id === input.chosenOptionId);
   if (!chosen) throw new Error(`option ${input.chosenOptionId} does not belong to item ${item.id}`);
 
+  const userId = responder(db, input.sessionId);
+  const state = getCellState(db, userId, cell.id);
+
   const correct = chosen.is_correct === 1;
-  const pBefore = cell.p_mastery;
+  const pBefore = state.p_mastery;
   const pAfter = bktUpdate({
     pL: pBefore,
     correct,
@@ -72,9 +90,9 @@ export function submitMcResponse(db: Db, input: McSubmission): McFeedback {
 
   const sched = scheduleUpdate(
     {
-      intervalDays: cell.interval_days,
-      ease: cell.ease,
-      consecutiveCorrect: cell.consecutive_correct,
+      intervalDays: state.interval_days,
+      ease: state.ease,
+      consecutiveCorrect: state.consecutive_correct,
     },
     correct,
     now()
@@ -82,6 +100,7 @@ export function submitMcResponse(db: Db, input: McSubmission): McFeedback {
 
   const tx = db.transaction(() => {
     const response = insertResponse(db, {
+      user_id: userId,
       session_id: input.sessionId,
       item_id: item.id,
       cell_id: cell.id,
@@ -100,10 +119,10 @@ export function submitMcResponse(db: Db, input: McSubmission): McFeedback {
     // Invariant 4: a wrong answer is positive evidence about what the user believes
     // instead, so the tag is recorded on selection.
     if (!correct && chosen.misconception_id != null) {
-      incrementMisconceptionSelected(db, chosen.misconception_id);
+      incrementMisconceptionSelected(db, userId, chosen.misconception_id);
     }
 
-    updateCellAfterResponse(db, cell.id, {
+    updateCellAfterResponse(db, userId, cell.id, {
       pMastery: pAfter,
       intervalDays: sched.intervalDays,
       ease: sched.ease,
@@ -186,7 +205,10 @@ export function submitDontKnowResponse(db: Db, input: DontKnowSubmission): DontK
   const isMc = item.kind === 'mc';
   const options = isMc ? listOptions(db, item.id) : [];
 
-  const pBefore = cell.p_mastery;
+  const userId = responder(db, input.sessionId);
+  const state = getCellState(db, userId, cell.id);
+
+  const pBefore = state.p_mastery;
   const pAfter = bktUpdate({
     pL: pBefore,
     correct: false,
@@ -196,9 +218,9 @@ export function submitDontKnowResponse(db: Db, input: DontKnowSubmission): DontK
 
   const sched = scheduleUpdate(
     {
-      intervalDays: cell.interval_days,
-      ease: cell.ease,
-      consecutiveCorrect: cell.consecutive_correct,
+      intervalDays: state.interval_days,
+      ease: state.ease,
+      consecutiveCorrect: state.consecutive_correct,
     },
     false,
     now()
@@ -206,6 +228,7 @@ export function submitDontKnowResponse(db: Db, input: DontKnowSubmission): DontK
 
   const tx = db.transaction(() => {
     const response = insertResponse(db, {
+      user_id: userId,
       session_id: input.sessionId,
       item_id: item.id,
       cell_id: cell.id,
@@ -222,7 +245,7 @@ export function submitDontKnowResponse(db: Db, input: DontKnowSubmission): DontK
       p_mastery_after: pAfter,
     });
 
-    updateCellAfterResponse(db, cell.id, {
+    updateCellAfterResponse(db, userId, cell.id, {
       pMastery: pAfter,
       intervalDays: sched.intervalDays,
       ease: sched.ease,
@@ -280,11 +303,14 @@ export async function submitFreeResponse(db: Db, input: FreeSubmission): Promise
   const cell = getCell(db, item.cell_id);
   if (!cell) throw new Error(`cell ${item.cell_id} not found`);
 
+  const userId = responder(db, input.sessionId);
+  const state = getCellState(db, userId, cell.id);
+
   const rubric = parseRubric(item);
   const verdict = await gradeFree(item, rubric, input.answerText);
 
   const correct = verdict.score >= FREE_PASS_THRESHOLD;
-  const pBefore = cell.p_mastery;
+  const pBefore = state.p_mastery;
   const pAfter = bktUpdate({
     pL: pBefore,
     correct,
@@ -294,9 +320,9 @@ export async function submitFreeResponse(db: Db, input: FreeSubmission): Promise
 
   const sched = scheduleUpdate(
     {
-      intervalDays: cell.interval_days,
-      ease: cell.ease,
-      consecutiveCorrect: cell.consecutive_correct,
+      intervalDays: state.interval_days,
+      ease: state.ease,
+      consecutiveCorrect: state.consecutive_correct,
     },
     correct,
     now()
@@ -304,6 +330,7 @@ export async function submitFreeResponse(db: Db, input: FreeSubmission): Promise
 
   const tx = db.transaction(() => {
     const response = insertResponse(db, {
+      user_id: userId,
       session_id: input.sessionId,
       item_id: item.id,
       cell_id: cell.id,
@@ -318,7 +345,7 @@ export async function submitFreeResponse(db: Db, input: FreeSubmission): Promise
       p_mastery_after: pAfter,
     });
 
-    updateCellAfterResponse(db, cell.id, {
+    updateCellAfterResponse(db, userId, cell.id, {
       pMastery: pAfter,
       intervalDays: sched.intervalDays,
       ease: sched.ease,

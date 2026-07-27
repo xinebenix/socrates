@@ -217,14 +217,16 @@ describe('schema checking', () => {
 
 describe('item statistics are withheld until there is enough data', () => {
   it('reports null difficulty and discrimination below n = 5', () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const cellId = db
       .prepare(`SELECT id FROM cells WHERE node_id = ? AND depth = 1`)
       .get(nodeIds[0]) as { id: number };
 
     const session = db
-      .prepare(`INSERT INTO sessions (concept_id, started_at, kind) VALUES (?, ?, 'practice')`)
-      .run(conceptId, '2026-01-01T00:00:00.000Z');
+      .prepare(
+        `INSERT INTO sessions (user_id, concept_id, started_at, kind) VALUES (?, ?, ?, 'practice')`
+      )
+      .run(userId, conceptId, '2026-01-01T00:00:00.000Z');
     const item = db
       .prepare(
         `INSERT INTO items (cell_id, kind, stem, explanation, generated_at, validated)
@@ -235,9 +237,11 @@ describe('item statistics are withheld until there is enough data', () => {
     for (let i = 0; i < 4; i++) {
       db.prepare(
         `INSERT INTO responses
-           (session_id, item_id, cell_id, is_correct, confidence, p_mastery_before, p_mastery_after, answered_at)
-         VALUES (?, ?, ?, ?, 'unsure', 0.3, 0.4, ?)`
+           (user_id, session_id, item_id, cell_id, is_correct, confidence,
+            p_mastery_before, p_mastery_after, answered_at)
+         VALUES (?, ?, ?, ?, ?, 'unsure', 0.3, 0.4, ?)`
       ).run(
+        userId,
         Number(session.lastInsertRowid),
         Number(item.lastInsertRowid),
         cellId.id,
@@ -255,9 +259,10 @@ describe('item statistics are withheld until there is enough data', () => {
     // A fifth response crosses the threshold.
     db.prepare(
       `INSERT INTO responses
-         (session_id, item_id, cell_id, is_correct, confidence, p_mastery_before, p_mastery_after, answered_at)
-       VALUES (?, ?, ?, 1, 'confident', 0.8, 0.9, '2026-01-05T00:00:00.000Z')`
-    ).run(Number(session.lastInsertRowid), Number(item.lastInsertRowid), cellId.id);
+         (user_id, session_id, item_id, cell_id, is_correct, confidence,
+          p_mastery_before, p_mastery_after, answered_at)
+       VALUES (?, ?, ?, ?, 1, 'confident', 0.8, 0.9, '2026-01-05T00:00:00.000Z')`
+    ).run(userId, Number(session.lastInsertRowid), Number(item.lastInsertRowid), cellId.id);
 
     const after = cellStats(db, conceptId).find((c) => c.cellId === cellId.id)!;
     expect(after.belowThreshold).toBe(false);
@@ -266,7 +271,7 @@ describe('item statistics are withheld until there is enough data', () => {
   });
 
   it('finds a distractor nobody has ever chosen after five administrations', () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const cell = db
       .prepare(`SELECT id FROM cells WHERE node_id = ? AND depth = 1`)
       .get(nodeIds[0]) as { id: number };

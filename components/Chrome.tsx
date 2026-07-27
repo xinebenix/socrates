@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { SpendSlot } from './SpendSlot';
 import { LocaleToggle } from './LocaleToggle';
+import { SignOutButton } from './SignOutButton';
 import { getDict } from '@/lib/i18n/server';
+import { currentUser } from '@/lib/session';
 
 export interface ChromeProps {
   /** Already localized by the caller, or a concept name, which is user data. */
@@ -18,6 +20,8 @@ export interface ChromeProps {
 /** Sticky header: wordmark, a one-line subtitle, per-concept navigation, spend, language. */
 export async function Topbar({ subtitle, conceptId, right, spend = true }: ChromeProps) {
   const t = await getDict();
+  // `spend` marks the public pages, and those are the ones with nobody signed in.
+  const user = spend ? await currentUser() : null;
 
   return (
     <header className="topbar">
@@ -49,6 +53,7 @@ export async function Topbar({ subtitle, conceptId, right, spend = true }: Chrom
         {/* Present on the login page too: someone who cannot read the login form is
             exactly the person who needs the switch most. */}
         <LocaleToggle />
+        {user && <SignOutButton email={user.display_name || user.email} />}
         {right}
       </div>
     </header>

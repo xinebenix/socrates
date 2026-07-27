@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation';
 import { Heatmap, HeatmapLegend } from '@/components/Heatmap';
 import { StartButton } from '../../concepts/ConceptsClient';
 import type { GridCell, GridRow } from '@/lib/stats';
-import type { MisconceptionRow, NodeRow } from '@/lib/db/types';
+import type { MisconceptionWithState, NodeRow } from '@/lib/db/types';
 import { DEPTHS } from '@/lib/prompts/depth';
 import { useDict } from '@/components/I18nProvider';
 import { fill, type Dict } from '@/lib/i18n/dict';
 
-type NodeWithMisconceptions = NodeRow & { misconceptions: MisconceptionRow[] };
+// The selection count is the reader's own, not the concept's — on a shared blueprint a
+// global tally would be somebody else's confusion reported as yours.
+type NodeWithMisconceptions = NodeRow & { misconceptions: MisconceptionWithState[] };
 
 /**
  * `origin` is a stored enum, not prose, so it is looked up rather than translated in
@@ -171,6 +173,8 @@ export function BlueprintEditor({
   hasSource,
   initialSource,
   initialNote,
+  canEdit,
+  visibility,
 }: {
   conceptId: number;
   initialNodes: NodeWithMisconceptions[];
@@ -179,6 +183,9 @@ export function BlueprintEditor({
   hasSource: boolean;
   initialSource: string;
   initialNote: string;
+  /** False on a shared concept somebody else owns: read it, or fork it. */
+  canEdit: boolean;
+  visibility: 'shared' | 'private';
 }) {
   const t = useDict();
   const router = useRouter();

@@ -14,7 +14,12 @@ import { installFakeLlm } from './fakeLlm';
 import { generateFreeItem, generateMcItem } from '../lib/pipeline/generateItem';
 import { submitDontKnowResponse } from '../lib/pipeline/respond';
 import { startSession } from '../lib/pipeline/session';
-import { getCell, listOptions, listResponsesForConcept } from '../lib/db/queries';
+import {
+  getCellState,
+  listMisconceptionsWithState,
+  listOptions,
+  listResponsesForConcept,
+} from '../lib/db/queries';
 import { bktUpdate } from '../lib/mastery/bkt';
 import type { Db } from '../lib/db';
 
@@ -28,13 +33,13 @@ function cellIdFor(db: Db, nodeId: number, depth: number): number {
 
 describe('declining a multiple-choice item', () => {
   it('records a wrong response at the lowest confidence, with no option chosen', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
     const cellId = cellIdFor(db, nodeIds[0], 1);
     const { item } = await generateMcItem(db, cellId);
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
 
     const feedback = submitDontKnowResponse(db, {
       sessionId: session.sessionId,
@@ -48,18 +53,18 @@ describe('declining a multiple-choice item', () => {
     expect(feedback.response.chosen_option_id).toBeNull();
     expect(feedback.response.free_text).toBeNull();
 
-    const responses = listResponsesForConcept(db, conceptId);
+    const responses = listResponsesForConcept(db, userId, conceptId);
     expect(responses).toHaveLength(1);
   });
 
   it('reveals the explanation and a rationale for every option', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
     const cellId = cellIdFor(db, nodeIds[0], 1);
     const { item } = await generateMcItem(db, cellId);
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
 
     const feedback = submitDontKnowResponse(db, {
       sessionId: session.sessionId,
@@ -83,13 +88,13 @@ describe('declining a multiple-choice item', () => {
   });
 
   it('attributes no misconception and moves no selection counter', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
     const cellId = cellIdFor(db, nodeIds[0], 1);
     const { item } = await generateMcItem(db, cellId);
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
 
     submitDontKnowResponse(db, {
       sessionId: session.sessionId,
@@ -100,30 +105,29 @@ describe('declining a multiple-choice item', () => {
     for (const o of listOptions(db, item!.id)) {
       expect(o.selected_count).toBe(0);
     }
-    const beliefs = db
-      .prepare(`SELECT times_selected FROM misconceptions WHERE node_id = ?`)
-      .all(nodeIds[0]) as { times_selected: number }[];
-    for (const b of beliefs) {
-      expect(b.times_selected).toBe(0);
+    // The selection counter lives per learner now, so "no counter moved" means this
+    // learner has no state row at all — not that a shared column is still zero.
+    for (const m of listMisconceptionsWithState(db, userId, conceptId)) {
+      expect(m.times_selected).toBe(0);
     }
   });
 
   it('updates the student model exactly as a wrong answer at the lowest confidence does', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
     const cellId = cellIdFor(db, nodeIds[0], 1);
     const { item } = await generateMcItem(db, cellId);
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
 
-    const before = getCell(db, cellId)!;
+    const before = getCellState(db, userId, cellId);
     const feedback = submitDontKnowResponse(db, {
       sessionId: session.sessionId,
       itemId: item!.id,
       latencyMs: 10_000,
     });
-    const after = getCell(db, cellId)!;
+    const after = getCellState(db, userId, cellId);
 
     expect(feedback.pMasteryAfter).toBe(
       bktUpdate({
@@ -139,15 +143,15 @@ describe('declining a multiple-choice item', () => {
   });
 
   it('collapses a long interval back to a day, as any failure does', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
     const cellId = cellIdFor(db, nodeIds[0], 1);
     const { item } = await generateMcItem(db, cellId);
     // A cell that was long since mastered and is not due for months.
-    masterCell(db, nodeIds[0], 1);
-    const session = startSession(db, conceptId, { length: 10 });
+    masterCell(db, userId, nodeIds[0], 1);
+    const session = startSession(db, userId, conceptId, { length: 10 });
 
     submitDontKnowResponse(db, {
       sessionId: session.sessionId,
@@ -155,7 +159,7 @@ describe('declining a multiple-choice item', () => {
       latencyMs: 10_000,
     });
 
-    const after = getCell(db, cellId)!;
+    const after = getCellState(db, userId, cellId);
     expect(after.interval_days).toBe(1);
     expect(after.consecutive_correct).toBe(0);
     expect(after.p_mastery).toBeLessThan(0.97);
@@ -165,13 +169,13 @@ describe('declining a multiple-choice item', () => {
 
 describe('declining a free-response item', () => {
   it('returns the rubric and spends nothing on grading an answer that was never written', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     const llm = installFakeLlm();
 
     const cellId = cellIdFor(db, nodeIds[0], 6);
     const { item } = await generateFreeItem(db, cellId);
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
 
     const callsBefore = llm.calls.length;
     const feedback = submitDontKnowResponse(db, {
