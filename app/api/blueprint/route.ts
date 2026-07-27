@@ -1,4 +1,4 @@
-import { getDb } from '@/lib/db';
+import { getDb, type Db } from '@/lib/db';
 import {
   createNode,
   deleteMisconception,
@@ -16,7 +16,7 @@ import {
 import { generateBlueprint } from '@/lib/pipeline/blueprint';
 import { buildGrid } from '@/lib/stats';
 import { blueprintAlarm, nodeHealth } from '@/lib/analysis/itemStats';
-import { bad, fail, ok, requireNum } from '../_shared';
+import { bad, editable, fail, ok, readable, requireNum, requireUserId } from '../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,10 +24,10 @@ export const maxDuration = 300;
 
 export async function GET(req: Request) {
   try {
+    const userId = await requireUserId();
     const conceptId = requireNum(new URL(req.url).searchParams.get('conceptId'), 'conceptId');
     const db = getDb();
-    const concept = getConcept(db, conceptId);
-    if (!concept) return bad('concept not found', 404);
+    const concept = readable(db, userId, conceptId);
 
     const nodes = listNodes(db, conceptId).map((n) => ({
       ...n,
@@ -37,7 +37,8 @@ export async function GET(req: Request) {
     return ok({
       concept,
       nodes,
-      grid: buildGrid(db, conceptId),
+      grid: buildGrid(db, userId, conceptId),
+      canEdit: concept.owner_id === userId,
       health: nodeHealth(db, conceptId),
       alarm: blueprintAlarm(db, conceptId),
     });
@@ -49,9 +50,14 @@ export async function GET(req: Request) {
 /** Generate (or regenerate and merge) the blueprint. */
 export async function POST(req: Request) {
   try {
+    const userId = await requireUserId();
     const body = (await req.json()) as { conceptId?: number; hints?: string };
     const conceptId = requireNum(body.conceptId, 'conceptId');
-    const report = await generateBlueprint(getDb(), conceptId, body.hints ?? null);
+    const db = getDb();
+    // Regenerating merges into the existing blueprint, so on a shared concept it changes
+    // the map everybody else is being tested against. Owner only.
+    editable(db, userId, conceptId);
+    const report = await generateBlueprint(db, conceptId, body.hints ?? null);
     return ok({ report });
   } catch (err) {
     return fail(err);
@@ -75,11 +81,18 @@ type Op =
  */
 export async function PATCH(req: Request) {
   try {
+    const userId = await requireUserId();
     const body = (await req.json()) as { ops?: Op[] };
     const ops = body.ops ?? [];
     if (ops.length === 0) return bad('no ops supplied');
 
     const db = getDb();
+    // Authorize before the transaction, and authorize every concept the batch touches.
+    // Ops reach a concept by several routes — a node id, a misconception id, or the id
+    // itself — so resolving them up front is what makes "the caller owns everything this
+    // edits" checkable in one place rather than eight.
+    for (const conceptId of conceptsTouched(db, ops)) editable(db, userId, conceptId);
+
     let conceptId: number | null = null;
 
     const tx = db.transaction(() => {
@@ -173,8 +186,49 @@ export async function PATCH(req: Request) {
       ...n,
       misconceptions: listMisconceptions(db, n.id),
     }));
-    return ok({ updated: true, nodes, grid: buildGrid(db, conceptId) });
+    return ok({ updated: true, nodes, grid: buildGrid(db, userId, conceptId) });
   } catch (err) {
     return fail(err);
   }
+}
+
+/**
+ * Every concept a batch of ops would change.
+ *
+ * Ops name their target in three different ways, so this walks each back to the concept
+ * it belongs to. An op whose target no longer exists contributes nothing — the op itself
+ * will fail inside the transaction, which is where that error belongs.
+ */
+function conceptsTouched(db: Db, ops: Op[]): number[] {
+  const ids = new Set<number>();
+  const fromNode = (nodeId: number) => {
+    const node = getNode(db, nodeId);
+    if (node) ids.add(node.concept_id);
+  };
+
+  for (const op of ops) {
+    switch (op.op) {
+      case 'add-node':
+        ids.add(op.conceptId);
+        break;
+      case 'update-node':
+      case 'delete-node':
+      case 'set-applicable':
+      case 'add-misconception':
+        fromNode(op.nodeId);
+        break;
+      case 'reorder-nodes':
+        op.nodeIds.forEach(fromNode);
+        break;
+      case 'update-misconception':
+      case 'delete-misconception': {
+        const row = db.prepare(`SELECT node_id FROM misconceptions WHERE id = ?`).get(op.id) as
+          | { node_id: number }
+          | undefined;
+        if (row) fromNode(row.node_id);
+        break;
+      }
+    }
+  }
+  return [...ids];
 }

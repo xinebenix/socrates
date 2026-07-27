@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getDb } from '@/lib/db';
-import { getConcept, listBenchmarkRuns, listFrozenItems } from '@/lib/db/queries';
+import { canReadConcept, getConcept, listBenchmarkRuns, listFrozenItems } from '@/lib/db/queries';
+import { requireUser } from '@/lib/session';
 import { benchmarkCoverage } from '@/lib/pipeline/benchmark';
 import { Topbar } from '@/components/Chrome';
 import { getDict } from '@/lib/i18n/server';
@@ -28,12 +29,13 @@ export default async function BenchmarkPage({
   if (!Number.isFinite(conceptId)) notFound();
 
   const db = getDb();
+  const user = await requireUser();
   const concept = getConcept(db, conceptId);
-  if (!concept) notFound();
+  if (!concept || !canReadConcept(concept, user.id)) notFound();
 
   const frozen = listFrozenItems(db, conceptId);
   const coverage = benchmarkCoverage(db, conceptId);
-  const runs = listBenchmarkRuns(db, conceptId).map((r) => ({
+  const runs = listBenchmarkRuns(db, user.id, conceptId).map((r) => ({
     id: r.id,
     runAt: r.run_at,
     results: JSON.parse(r.results_json) as StoredResults,

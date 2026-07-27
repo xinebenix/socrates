@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getDb } from '@/lib/db';
-import { getConcept } from '@/lib/db/queries';
+import { canReadConcept, getConcept } from '@/lib/db/queries';
+import { requireUser } from '@/lib/session';
 import { conceptStats } from '@/lib/stats';
 import { blueprintAlarm } from '@/lib/analysis/itemStats';
 import { Heatmap, HeatmapLegend } from '@/components/Heatmap';
@@ -22,11 +23,12 @@ export default async function DashboardPage({
   if (!Number.isFinite(conceptId)) notFound();
 
   const db = getDb();
+  const user = await requireUser();
   const concept = getConcept(db, conceptId);
-  if (!concept) notFound();
+  if (!concept || !canReadConcept(concept, user.id)) notFound();
 
   const t = await getDict();
-  const s = conceptStats(db, conceptId);
+  const s = conceptStats(db, user.id, conceptId);
   const alarm = blueprintAlarm(db, conceptId);
   const maxForecast = Math.max(1, ...s.dueForecast.map((d) => d.count));
   const active = s.misconceptionProfile.filter((m) => m.active);

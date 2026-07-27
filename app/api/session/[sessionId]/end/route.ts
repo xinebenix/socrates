@@ -1,19 +1,19 @@
 import { getDb } from '@/lib/db';
-import { endSession, getSession, listResponsesForSession } from '@/lib/db/queries';
+import { endSession, listResponsesForSession } from '@/lib/db/queries';
 import { sessionProgress } from '@/lib/pipeline/session';
-import { bad, fail, ok, requireNum } from '../../../_shared';
+import { fail, ok, ownedSession, requireNum, requireUserId } from '../../../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(_req: Request, ctx: { params: Promise<{ sessionId: string }> }) {
   try {
+    const userId = await requireUserId();
     const { sessionId: raw } = await ctx.params;
     const sessionId = requireNum(raw, 'sessionId');
 
     const db = getDb();
-    const session = getSession(db, sessionId);
-    if (!session) return bad('session not found', 404);
+    const session = ownedSession(db, userId, sessionId);
 
     endSession(db, sessionId);
 
