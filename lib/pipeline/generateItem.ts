@@ -16,7 +16,7 @@ import { selectExcerpt, looksContested } from '../source';
 import type { ItemRow, ValidatorVerdict } from '../db/types';
 import { logEvent } from '../ops';
 import {
-  activeMisconceptions,
+  activeMisconceptionsAnyUser,
   getCell,
   getConcept,
   getNode,
@@ -491,7 +491,12 @@ function loadContext(db: Db, cellId: number): GenContext | null {
   if (!concept) return null;
 
   const misconceptions = listMisconceptions(db, node.id);
-  const activeIds = new Set(activeMisconceptions(db, concept.id).map((m) => m.id));
+  // Generation is shared work, so "active" here means active for anybody training on
+  // this concept, not for one learner. An item written against a belief several people
+  // keep picking is worth writing whoever asked for it; scoping this to the requester
+  // would make the same cell generate differently depending on who triggered the fill,
+  // which is not a property a shared bank can have.
+  const activeIds = new Set(activeMisconceptionsAnyUser(db, concept.id).map((m) => m.id));
 
   return {
     cell,

@@ -16,6 +16,7 @@ import {
   getCell,
   getItem,
   getNode,
+  getSession,
   listOptions,
   listSessionPlan,
   markItemServed,
@@ -43,15 +44,18 @@ export interface StartedSession {
 
 export function startSession(
   db: Db,
+  userId: number,
   conceptId: number,
   opts: StartSessionOptions = {}
 ): StartedSession {
-  const cells = loadCellSnapshots(db, conceptId);
+  const cells = loadCellSnapshots(db, userId, conceptId);
   if (cells.length === 0) {
     throw new Error('this concept has no blueprint yet — generate one first');
   }
 
-  const remediationNodeIds = new Set(activeMisconceptions(db, conceptId).map((m) => m.node_id));
+  const remediationNodeIds = new Set(
+    activeMisconceptions(db, userId, conceptId).map((m) => m.node_id)
+  );
 
   const { slots, warning, frontier } = assembleSession({
     cells,
@@ -65,7 +69,7 @@ export function startSession(
     throw new Error('nothing to serve: every applicable cell is mastered and nothing is due');
   }
 
-  const session = createSession(db, conceptId, opts.kind ?? 'practice');
+  const session = createSession(db, userId, conceptId, opts.kind ?? 'practice');
   writeSessionPlan(
     db,
     session.id,
@@ -76,6 +80,7 @@ export function startSession(
   // the first few items be generated inline while the user waits on them.
   warmSessionPlan(
     db,
+    userId,
     conceptId,
     slots.map((s) => s.cellId)
   );
@@ -138,6 +143,10 @@ export interface NextItemResult {
  * swallowed, so "no more items" and "generation is failing" are distinguishable.
  */
 export async function nextItem(db: Db, sessionId: number): Promise<NextItemResult> {
+  const session = getSession(db, sessionId);
+  if (!session) throw new Error(`session ${sessionId} not found`);
+  const userId = session.user_id;
+
   const plan = listSessionPlan(db, sessionId);
   const total = plan.length;
 
@@ -158,9 +167,11 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
 
     const kind = cell.depth === 6 ? 'free' : 'mc';
 
-    // A benchmark plan pins its items at plan time; practice takes from the buffer.
+    // A benchmark plan pins its items at plan time; practice takes from the buffer —
+    // which now means the first item of this cell this learner has not already answered,
+    // not the first item nobody has.
     let item: ItemRow | undefined =
-      slot.item_id != null ? getItem(db, slot.item_id) : takeBufferedItem(db, cell.id, kind);
+      slot.item_id != null ? getItem(db, slot.item_id) : takeBufferedItem(db, userId, cell.id, kind);
 
     // Someone may already be writing this exact cell — the session-start warm, or the
     // refill from the previous answer. Waiting for that costs the same as generating
@@ -173,7 +184,7 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
           inflight,
           new Promise<void>((r) => setTimeout(r, WAIT_FOR_INFLIGHT_MS)),
         ]);
-        item = takeBufferedItem(db, cell.id, kind);
+        item = takeBufferedItem(db, userId, cell.id, kind);
       }
     }
 
@@ -203,7 +214,7 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
     }
 
     attachItemToSlot(db, sessionId, slot.position, item.id);
-    markItemServed(db, item.id);
+    markItemServed(db, userId, item.id);
 
     const node = getNode(db, cell.node_id);
     // Cover the slots still ahead in this session, and nothing beyond them. Once the
@@ -220,6 +231,7 @@ export async function nextItem(db: Db, sessionId: number): Promise<NextItemResul
     if (node) {
       topUpInBackground(
         db,
+        userId,
         node.concept_id,
         plan
           .filter((p) => p.position > slot.position && p.item_id == null)

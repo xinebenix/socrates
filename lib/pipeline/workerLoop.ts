@@ -11,7 +11,7 @@
  */
 
 import { getDb } from '../db';
-import { listConcepts } from '../db/queries';
+import { activeCohorts } from '../db/queries';
 import { logEvent } from '../ops';
 import { bufferTarget, dueShortfalls, topUpBuffer } from './buffer';
 import { batchingEnabled } from '../llm/batch';
@@ -64,6 +64,22 @@ export function tickBudget(): number {
   return Math.max(8, bufferTarget() * 4);
 }
 
+/**
+ * How long an account stays worth pre-generating for after its last session.
+ *
+ * With one user this question did not exist. With accounts it is the difference between
+ * a bounded bill and an unbounded one: someone who signs up, joins four concepts and
+ * never returns would otherwise have their cells stocked, and restocked, for as long as
+ * the deployment lives. Thirty days is generous for a spaced-repetition tool whose
+ * longest interval is 180 — a dormant account simply generates inline when it comes
+ * back, at the cost of one wait.
+ */
+export function activeWindowDays(): number {
+  const raw = Number(process.env.GYM_ACTIVE_USER_WINDOW_DAYS);
+  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  return 30;
+}
+
 export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<void> {
   const started = Date.now();
   const db = getDb();
@@ -98,8 +114,8 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
       status.failed += progress.failed;
 
       const inFlight = cellsInFlight(db);
-      for (const concept of listConcepts(db)) {
-        const shorts = dueShortfalls(db, concept.id, {
+      for (const cohort of activeCohorts(db, activeWindowDays())) {
+        const shorts = dueShortfalls(db, cohort.userIds, cohort.conceptId, {
           maxGenerations: maxGenerationsPerConcept,
           exclude: inFlight,
         });
@@ -118,9 +134,9 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
     }
   }
 
-  for (const concept of listConcepts(db)) {
+  for (const cohort of activeCohorts(db, activeWindowDays())) {
     try {
-      const report = await topUpBuffer(db, concept.id, {
+      const report = await topUpBuffer(db, cohort.userIds, cohort.conceptId, {
         maxGenerations: maxGenerationsPerConcept,
       });
       status.generated += report.generated;
@@ -128,8 +144,9 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
 
       if (report.generated > 0 || report.failed > 0) {
         logEvent(db, report.failed > 0 ? 'warn' : 'info', 'buffer.topup', {
-          concept: concept.name,
-          conceptId: concept.id,
+          concept: cohort.name,
+          conceptId: cohort.conceptId,
+          learners: cohort.userIds.length,
           generated: report.generated,
           failed: report.failed,
           skipped: report.skipped,
@@ -139,7 +156,7 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
       status.failed += 1;
       status.lastError = err instanceof Error ? err.message : String(err);
       logEvent(db, 'error', 'buffer.tick_failed', {
-        conceptId: concept.id,
+        conceptId: cohort.conceptId,
         error: status.lastError,
       });
     }

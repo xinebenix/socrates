@@ -122,12 +122,33 @@ export interface TopUpReport {
 }
 
 /**
+ * How stocked a cell is for a cohort — the count for whichever member has the fewest
+ * items left unseen.
+ *
+ * Generation is global and consumption is per learner, so this is the number that
+ * matters: one fill lands in everybody's buffer at once, and the cell runs dry for the
+ * person furthest through it first. Taking the minimum is what makes a shared concept
+ * cost roughly what a single-user one did no matter how many people join it — the
+ * alternative, summing or filling per user, would multiply the bill by the cohort.
+ *
+ * An empty cohort means nobody in particular: user 0 cannot exist, so nothing is marked
+ * seen for them and this counts every ready item in the cell.
+ */
+export function readyForCohort(db: Db, cohort: number[], cellId: number): number {
+  if (cohort.length === 0) return countReadyItems(db, 0, cellId);
+  let fewest = Infinity;
+  for (const userId of cohort) fewest = Math.min(fewest, countReadyItems(db, userId, cellId));
+  return fewest;
+}
+
+/**
  * Which of these cells are short of the target, and by how much. Shared by the
  * synchronous fill and the batch pipeline so the two can never disagree about what
  * "short" means.
  */
 export function computeShortfalls(
   db: Db,
+  cohort: number[],
   orderedCellIds: number[],
   opts: {
     target: number;
@@ -149,7 +170,7 @@ export function computeShortfalls(
       skipped++;
       continue;
     }
-    const have = countReadyItems(db, cellId);
+    const have = readyForCohort(db, cohort, cellId);
 
     // Hysteresis: a partly-drained cell is left alone until it reaches the low-water
     // mark, then refilled to the target in a single call. Topping up by one after
@@ -177,19 +198,53 @@ export function computeShortfalls(
   return { short, skipped };
 }
 
-/** The worker's view: every plausibly-due cell that is short, minus what is in flight. */
+/**
+ * The worker's view: every plausibly-due cell that is short, minus what is in flight.
+ *
+ * "Plausibly due" is a per-learner judgement — it reads mastery and the schedule — so
+ * with a cohort it is the union of what each member is plausibly due for, ordered by
+ * how many of them want it. A cell three people are working on is worth stocking before
+ * one only a single person has reached.
+ */
 export function dueShortfalls(
   db: Db,
+  cohort: number[],
   conceptId: number,
   opts: { maxGenerations: number; exclude?: Set<number> }
 ): { cellId: number; want: number }[] {
-  const due = plausiblyDueCells(db, conceptId, lookaheadCells()).map((c) => c.cellId);
-  return computeShortfalls(db, due, {
+  const due = cohortDueCells(db, cohort, conceptId);
+  return computeShortfalls(db, cohort, due, {
     target: bufferTarget(),
     maxGenerations: opts.maxGenerations,
     exclude: opts.exclude,
     refillAt: refillThreshold(),
   }).short;
+}
+
+/** The union of the cohort's plausibly-due cells, most-wanted first, capped at the lookahead. */
+export function cohortDueCells(db: Db, cohort: number[], conceptId: number): number[] {
+  const limit = lookaheadCells();
+  if (cohort.length <= 1) {
+    return plausiblyDueCells(db, cohort[0] ?? 0, conceptId, limit).map((c) => c.cellId);
+  }
+
+  const demand = new Map<number, { wanters: number; rank: number }>();
+  for (const userId of cohort) {
+    plausiblyDueCells(db, userId, conceptId, limit).forEach((c, i) => {
+      const seen = demand.get(c.cellId);
+      if (seen) {
+        seen.wanters++;
+        seen.rank = Math.min(seen.rank, i);
+      } else {
+        demand.set(c.cellId, { wanters: 1, rank: i });
+      }
+    });
+  }
+
+  return [...demand.entries()]
+    .sort(([, a], [, b]) => b.wanters - a.wanters || a.rank - b.rank)
+    .slice(0, limit)
+    .map(([cellId]) => cellId);
 }
 
 /**
@@ -206,6 +261,7 @@ async function pooled(tasks: (() => Promise<void>)[], limit: number): Promise<vo
 
 export async function topUpBuffer(
   db: Db,
+  cohort: number[],
   conceptId: number,
   opts: {
     maxGenerations?: number;
@@ -223,7 +279,7 @@ export async function topUpBuffer(
   const maxGenerations = opts.maxGenerations ?? Math.max(6, target * 2);
   const report: TopUpReport = { generated: 0, failed: 0, skipped: 0 };
 
-  const due = plausiblyDueCells(db, conceptId, lookaheadCells()).map((c) => c.cellId);
+  const due = cohortDueCells(db, cohort, conceptId);
   const ordered = opts.priorityCellIds?.length
     ? [...new Set([...opts.priorityCellIds, ...due])]
     : due;
@@ -234,7 +290,7 @@ export async function topUpBuffer(
   // A cell's whole shortfall goes into ONE call. The reasoning a generation does before
   // writing an item is about the cell, not the item, so filling a cell three-deep in
   // one call costs far less than three calls — see generateMcItems.
-  const { short, skipped } = computeShortfalls(db, ordered, {
+  const { short, skipped } = computeShortfalls(db, cohort, ordered, {
     target,
     maxGenerations,
     // A cell whose items are already being written in a batch must not be written
@@ -301,6 +357,7 @@ export function planNeed(cellIds: number[]): Map<number, number> {
  */
 export async function fillSessionNeed(
   db: Db,
+  userId: number,
   conceptId: number,
   cellIds: number[],
   opts: { maxGenerations?: number; concurrency?: number } = {}
@@ -339,7 +396,10 @@ export async function fillSessionNeed(
       report.skipped++;
       continue;
     }
-    const want = needed - countReadyItems(db, cellId);
+    // This learner's own count, not the cohort's. Covering the session in front of them
+    // is about what *they* have left unseen; a cell stocked four deep is still empty as
+    // far as somebody who has answered all four is concerned.
+    const want = needed - countReadyItems(db, userId, cellId);
     if (want <= 0) {
       report.skipped++;
       continue;
@@ -386,8 +446,13 @@ export async function fillSessionNeed(
  * Failures are swallowed on purpose: a generation error must never take down the
  * answer path.
  */
-export function topUpInBackground(db: Db, conceptId: number, planCellIds: number[]): void {
-  void fillSessionNeed(db, conceptId, planCellIds).catch(() => {});
+export function topUpInBackground(
+  db: Db,
+  userId: number,
+  conceptId: number,
+  planCellIds: number[]
+): void {
+  void fillSessionNeed(db, userId, conceptId, planCellIds).catch(() => {});
 }
 
 /**
@@ -397,6 +462,11 @@ export function topUpInBackground(db: Db, conceptId: number, planCellIds: number
  * waits: the worker's next tick could be a minute away, and it would not have known
  * to prefer these cells anyway.
  */
-export function warmSessionPlan(db: Db, conceptId: number, cellIds: number[]): void {
-  void fillSessionNeed(db, conceptId, cellIds).catch(() => {});
+export function warmSessionPlan(
+  db: Db,
+  userId: number,
+  conceptId: number,
+  cellIds: number[]
+): void {
+  void fillSessionNeed(db, userId, conceptId, cellIds).catch(() => {});
 }
