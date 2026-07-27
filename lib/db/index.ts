@@ -3,11 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hashPasswordSync, normalizeEmail } from '../password';
 import { conceptNameKey } from './names';
+import { processState } from '../processState';
 import { INDEXES_SQL, SCHEMA_SQL } from './schema';
 
 export type Db = Database.Database;
 
-let singleton: Db | null = null;
+/**
+ * One connection per process.
+ *
+ * A `let` here was two connections: the in-process worker and the request handlers get
+ * separate module instances under Next's bundling, so each opened its own. WAL and
+ * `busy_timeout` made that survivable rather than visible, which is the worst way for a
+ * thing like this to be wrong. See `lib/processState.ts`.
+ */
+const handle = processState<{ db: Db | null }>('db/index', () => ({ db: null }));
 
 export function dbPath(): string {
   return process.env.GYM_DB ?? './data/gym.db';
@@ -235,15 +244,15 @@ function liftStudentModel(db: Db, ownerId: number | null): void {
 
 /** The process-wide handle used by API routes and the worker. */
 export function getDb(): Db {
-  if (!singleton) {
-    singleton = openDb(dbPath());
+  if (!handle.db) {
+    handle.db = openDb(dbPath());
   }
-  return singleton;
+  return handle.db;
 }
 
 /** Tests point the singleton at an in-memory database. */
 export function setDb(db: Db | null): void {
-  singleton = db;
+  handle.db = db;
 }
 
 export function newTestDb(): Db {

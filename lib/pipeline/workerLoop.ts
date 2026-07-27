@@ -17,9 +17,7 @@ import { bufferTarget, dueShortfalls, topUpBuffer } from './buffer';
 import { batchingEnabled } from '../llm/batch';
 import { cellsInFlight, processBatches, submitGenerationBatch } from './batchFill';
 import { budgetStatus, speculativeGenerationAllowed } from '../cost';
-
-/** Logged once per crossing, not once per tick. */
-let budgetWarned = false;
+import { processState } from '../processState';
 
 export interface WorkerStatus {
   running: boolean;
@@ -32,19 +30,42 @@ export interface WorkerStatus {
   lastError: string | null;
 }
 
-const status: WorkerStatus = {
-  running: false,
-  startedAt: null,
-  lastTickAt: null,
-  lastTickMs: null,
-  ticks: 0,
-  generated: 0,
-  failed: 0,
-  lastError: null,
-};
+interface WorkerRuntime {
+  status: WorkerStatus;
+  timer: ReturnType<typeof setTimeout> | null;
+  stopping: boolean;
+  /** Logged once per crossing, not once per tick. */
+  budgetWarned: boolean;
+}
+
+/**
+ * Per process, not per module instance.
+ *
+ * The loop is started from `instrumentation.ts` and read by `/api/health`, and Next
+ * bundles those separately — so module-level state here would be two objects, and the
+ * health endpoint would report on a worker that is not the one running. See
+ * `lib/processState.ts`.
+ */
+const runtime = processState<WorkerRuntime>('pipeline/workerLoop', () => ({
+  status: {
+    running: false,
+    startedAt: null,
+    lastTickAt: null,
+    lastTickMs: null,
+    ticks: 0,
+    generated: 0,
+    failed: 0,
+    lastError: null,
+  },
+  timer: null,
+  stopping: false,
+  budgetWarned: false,
+}));
+
+const status = runtime.status;
 
 export function workerStatus(): WorkerStatus {
-  return { ...status };
+  return { ...runtime.status };
 }
 
 export function workerIntervalMs(): number {
@@ -88,8 +109,8 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
   // app still trains, generating inline — slower, and only for items actually served.
   if (!speculativeGenerationAllowed(db)) {
     const budget = budgetStatus(db);
-    if (!budgetWarned) {
-      budgetWarned = true;
+    if (!runtime.budgetWarned) {
+      runtime.budgetWarned = true;
       logEvent(db, 'warn', 'budget.exceeded', {
         month: budget.month,
         limitUsd: budget.limitUsd,
@@ -102,7 +123,7 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
     status.lastTickMs = Date.now() - started;
     return;
   }
-  budgetWarned = false;
+  runtime.budgetWarned = false;
 
   // The worker's fills are speculative by definition, so they go through the Batch
   // API at half price when it is available. Results land a tick or two later, which
@@ -167,43 +188,40 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
   status.lastTickMs = Date.now() - started;
 }
 
-let timer: ReturnType<typeof setTimeout> | null = null;
-let stopping = false;
-
 /** Idempotent: a second call is a no-op, so a hot reload cannot start two loops. */
 export function startBufferWorker(): void {
   if (status.running) return;
 
   status.running = true;
   status.startedAt = new Date().toISOString();
-  stopping = false;
+  runtime.stopping = false;
 
   const interval = workerIntervalMs();
   logEvent(null, 'info', 'worker.started', { intervalMs: interval, target: bufferTarget() });
 
   const run = async () => {
-    if (stopping) return;
+    if (runtime.stopping) return;
     try {
       await tick();
     } catch (err) {
       status.lastError = err instanceof Error ? err.message : String(err);
       logEvent(null, 'error', 'worker.tick_threw', { error: status.lastError });
     }
-    if (!stopping) {
-      timer = setTimeout(() => void run(), interval);
+    if (!runtime.stopping) {
+      runtime.timer = setTimeout(() => void run(), interval);
       // Do not hold the process open on this timer alone.
-      if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+      if (typeof runtime.timer === 'object' && 'unref' in runtime.timer) runtime.timer.unref();
     }
   };
 
   // A short delay so the first tick does not compete with server startup.
-  timer = setTimeout(() => void run(), 5_000);
-  if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+  runtime.timer = setTimeout(() => void run(), 5_000);
+  if (typeof runtime.timer === 'object' && 'unref' in runtime.timer) runtime.timer.unref();
 }
 
 export function stopBufferWorker(): void {
-  stopping = true;
+  runtime.stopping = true;
   status.running = false;
-  if (timer) clearTimeout(timer);
-  timer = null;
+  if (runtime.timer) clearTimeout(runtime.timer);
+  runtime.timer = null;
 }
