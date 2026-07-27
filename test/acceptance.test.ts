@@ -22,7 +22,9 @@ import { mergeBlueprint } from '../lib/pipeline/blueprint';
 import { startSession, nextItem } from '../lib/pipeline/session';
 import {
   getCell,
+  getCellState,
   listMisconceptions,
+  listMisconceptionsWithState,
   listNodes,
   listOptions,
   listResponsesForConcept,
@@ -84,7 +86,7 @@ describe('AT3 — the validator does not see the answer key (invariant 3)', () =
 
 describe('AT4 — every distractor is tagged to a misconception (invariant 4)', () => {
   it('a served item has exactly 3 distractors, each with a non-null misconception_id', async () => {
-    const { db, nodeIds } = makeFixture(1);
+    const { db, userId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
@@ -107,7 +109,7 @@ describe('AT4 — every distractor is tagged to a misconception (invariant 4)', 
   });
 
   it('selecting a distractor writes its id into the response and increments the counter', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
@@ -115,9 +117,12 @@ describe('AT4 — every distractor is tagged to a misconception (invariant 4)', 
     const { item } = await generateMcItem(db, cellId);
     const distractor = listOptions(db, item!.id).find((o) => o.is_correct === 0)!;
 
-    const before = listMisconceptions(db, nodeIds[0]).find((m) => m.id === distractor.misconception_id)!;
+    // The selection counter is per learner now, so it is read through the state join.
+    const before = listMisconceptionsWithState(db, userId, conceptId).find(
+      (m) => m.id === distractor.misconception_id
+    )!;
 
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
     const feedback = submitMcResponse(db, {
       sessionId: session.sessionId,
       itemId: item!.id,
@@ -129,18 +134,20 @@ describe('AT4 — every distractor is tagged to a misconception (invariant 4)', 
     expect(feedback.correct).toBe(false);
     expect(feedback.response.chosen_option_id).toBe(distractor.id);
 
-    const after = listMisconceptions(db, nodeIds[0]).find((m) => m.id === distractor.misconception_id)!;
+    const after = listMisconceptionsWithState(db, userId, conceptId).find(
+      (m) => m.id === distractor.misconception_id
+    )!;
     expect(after.times_selected).toBe(before.times_selected + 1);
 
     // The response record carries the tag through the option it points at.
-    const responses = listResponsesForConcept(db, conceptId);
+    const responses = listResponsesForConcept(db, userId, conceptId);
     expect(responses).toHaveLength(1);
     const chosen = listOptions(db, item!.id).find((o) => o.id === responses[0].chosen_option_id)!;
     expect(chosen.misconception_id).toBe(distractor.misconception_id);
   });
 
   it('a label the generator invents is inserted before the item is persisted', async () => {
-    const { db, nodeIds } = makeFixture(1);
+    const { db, userId, nodeIds } = makeFixture(1);
     // No misconception bank at all — the generator must propose all three.
     installFakeLlm();
 
@@ -161,7 +168,7 @@ describe('AT4 — every distractor is tagged to a misconception (invariant 4)', 
 
 describe('AT6 — items are never reused verbatim (invariant 6)', () => {
   it('20 consecutive administrations of one cell produce no identical stems and none above 0.9 similarity', async () => {
-    const { db, nodeIds } = makeFixture(1);
+    const { db, userId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
@@ -189,7 +196,7 @@ describe('AT6 — items are never reused verbatim (invariant 6)', () => {
   });
 
   it('the pipeline rejects a repeat even when the model keeps producing one', async () => {
-    const { db, nodeIds } = makeFixture(1);
+    const { db, userId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
 
     // Attempts 1 and 2 repeat the previous stem verbatim; attempt 3 varies.
@@ -219,8 +226,8 @@ describe('AT6 — items are never reused verbatim (invariant 6)', () => {
 
 describe('AT7 — interleaving (invariant 7)', () => {
   it('a 20-item session over 5 nodes has no adjacent repeats and no node twice in a 5-window', () => {
-    const { db, conceptId } = makeFixture(5);
-    const cells = loadCellSnapshots(db, conceptId);
+    const { db, userId, conceptId } = makeFixture(5);
+    const cells = loadCellSnapshots(db, userId, conceptId);
 
     const { slots, warning } = assembleSession({
       cells,
@@ -239,9 +246,9 @@ describe('AT7 — interleaving (invariant 7)', () => {
   });
 
   it('holds at exactly four nodes', () => {
-    const { db, conceptId } = makeFixture(4);
+    const { db, userId, conceptId } = makeFixture(4);
     const { slots } = assembleSession({
-      cells: loadCellSnapshots(db, conceptId),
+      cells: loadCellSnapshots(db, userId, conceptId),
       remediationNodeIds: new Set(),
       targetLength: 20,
       now: new Date('2026-01-01T00:00:00.000Z'),
@@ -253,9 +260,9 @@ describe('AT7 — interleaving (invariant 7)', () => {
   });
 
   it('warns rather than silently violating when the blueprint is too small', () => {
-    const { db, conceptId } = makeFixture(1);
+    const { db, userId, conceptId } = makeFixture(1);
     const { slots, warning } = assembleSession({
-      cells: loadCellSnapshots(db, conceptId),
+      cells: loadCellSnapshots(db, userId, conceptId),
       remediationNodeIds: new Set(),
       targetLength: 10,
       now: new Date('2026-01-01T00:00:00.000Z'),
@@ -269,7 +276,7 @@ describe('AT7 — interleaving (invariant 7)', () => {
 
 describe('AT8 — scheduling persists and mastery decays with time (invariant 8)', () => {
   it('a cell answered correctly today is due in the future; 30 days on it has decayed and is due', async () => {
-    const { db, conceptId, nodeIds, clock } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds, clock } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
@@ -277,7 +284,7 @@ describe('AT8 — scheduling persists and mastery decays with time (invariant 8)
     const { item } = await generateMcItem(db, cellId);
     const correct = listOptions(db, item!.id).find((o) => o.is_correct === 1)!;
 
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
     submitMcResponse(db, {
       sessionId: session.sessionId,
       itemId: item!.id,
@@ -286,7 +293,7 @@ describe('AT8 — scheduling persists and mastery decays with time (invariant 8)
       latencyMs: 900,
     });
 
-    const afterAnswer = getCell(db, cellId)!;
+    const afterAnswer = getCellState(db, userId, cellId);
     expect(afterAnswer.next_due_at).not.toBeNull();
     expect(new Date(afterAnswer.next_due_at!).getTime()).toBeGreaterThan(clock.now().getTime());
     expect(isDue(afterAnswer.next_due_at, clock.now())).toBe(false);
@@ -303,7 +310,7 @@ describe('AT8 — scheduling persists and mastery decays with time (invariant 8)
     // Advance the clock 30 days.
     clock.advanceDays(30);
 
-    const cell = getCell(db, cellId)!;
+    const cell = getCellState(db, userId, cellId);
     // The stored latent estimate is untouched — decay is applied at read time.
     expect(cell.p_mastery).toBeCloseTo(storedMastery, 10);
 
@@ -317,7 +324,7 @@ describe('AT8 — scheduling persists and mastery decays with time (invariant 8)
     expect(isDue(cell.next_due_at, clock.now())).toBe(true);
 
     // And it shows up in the due queue the assembler builds.
-    const snapshots = loadCellSnapshots(db, conceptId);
+    const snapshots = loadCellSnapshots(db, userId, conceptId);
     const { slots } = assembleSession({
       cells: snapshots,
       remediationNodeIds: new Set(),
@@ -334,21 +341,21 @@ describe('AT8 — scheduling persists and mastery decays with time (invariant 8)
 
 describe('AT10 — benchmark items never enter practice (invariant 10)', () => {
   it('the buffer query never returns a frozen item', async () => {
-    const { db, nodeIds } = makeFixture(1);
+    const { db, userId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
     const cellId = getCellId(db, nodeIds[0], 1);
     const { item } = await generateMcItem(db, cellId);
 
-    expect(takeBufferedItem(db, cellId, 'mc')?.id).toBe(item!.id);
+    expect(takeBufferedItem(db, userId, cellId, 'mc')?.id).toBe(item!.id);
 
     setItemFrozen(db, item!.id, true);
-    expect(takeBufferedItem(db, cellId, 'mc')).toBeUndefined();
+    expect(takeBufferedItem(db, userId, cellId, 'mc')).toBeUndefined();
   });
 
   it('a practice session never serves a frozen item, even when it is the only one', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     const fake = installFakeLlm();
 
@@ -358,7 +365,7 @@ describe('AT10 — benchmark items never enter practice (invariant 10)', () => {
 
     const generationsBefore = fake.generations;
 
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
     const { item: served } = await nextItem(db, session.sessionId);
 
     expect(served).not.toBeNull();
@@ -368,7 +375,7 @@ describe('AT10 — benchmark items never enter practice (invariant 10)', () => {
   });
 
   it('the SQL itself carries the predicate, not the caller', () => {
-    const { db, nodeIds } = makeFixture(1);
+    const { db, userId, nodeIds } = makeFixture(1);
     const cellId = getCellId(db, nodeIds[0], 1);
     db.prepare(
       `INSERT INTO items (cell_id, kind, stem, explanation, generated_at, validated, frozen)
@@ -379,7 +386,7 @@ describe('AT10 — benchmark items never enter practice (invariant 10)', () => {
       .prepare(`SELECT * FROM items WHERE cell_id = ? AND frozen = 1`)
       .all(cellId) as unknown[];
     expect(rows).toHaveLength(1);
-    expect(takeBufferedItem(db, cellId, 'mc')).toBeUndefined();
+    expect(takeBufferedItem(db, userId, cellId, 'mc')).toBeUndefined();
   });
 });
 
@@ -387,7 +394,7 @@ describe('AT10 — benchmark items never enter practice (invariant 10)', () => {
 
 describe('AT11 — the blueprint is editable and regeneration merges (invariant 11)', () => {
   it('editing a node title and description preserves cells, mastery and response history', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     addMisconceptions(db, nodeIds[0]);
     installFakeLlm();
 
@@ -395,7 +402,7 @@ describe('AT11 — the blueprint is editable and regeneration merges (invariant 
     const { item } = await generateMcItem(db, cellId);
     const correct = listOptions(db, item!.id).find((o) => o.is_correct === 1)!;
 
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
     submitMcResponse(db, {
       sessionId: session.sessionId,
       itemId: item!.id,
@@ -404,8 +411,8 @@ describe('AT11 — the blueprint is editable and regeneration merges (invariant 
       latencyMs: 500,
     });
 
-    const before = getCell(db, cellId)!;
-    const responsesBefore = listResponsesForConcept(db, conceptId).length;
+    const before = getCellState(db, userId, cellId);
+    const responsesBefore = listResponsesForConcept(db, userId, conceptId).length;
 
     const { updateNode } = await import('../lib/db/queries');
     updateNode(db, nodeIds[0], {
@@ -413,19 +420,21 @@ describe('AT11 — the blueprint is editable and regeneration merges (invariant 
       description: 'A better description of what mastery here means.',
     });
 
-    const after = getCell(db, cellId)!;
-    expect(after.id).toBe(before.id);
+    // The cell itself survived the edit, and so did the mastery attached to it — those
+    // are two tables now, and invariant 11 needs both.
+    expect(getCell(db, cellId)).toBeDefined();
+    const after = getCellState(db, userId, cellId);
     expect(after.p_mastery).toBeCloseTo(before.p_mastery, 10);
     expect(after.response_count).toBe(before.response_count);
     expect(after.next_due_at).toBe(before.next_due_at);
-    expect(listResponsesForConcept(db, conceptId)).toHaveLength(responsesBefore);
+    expect(listResponsesForConcept(db, userId, conceptId)).toHaveLength(responsesBefore);
   });
 
   it('regeneration merges rather than truncating: survivors keep mastery, absent nodes are kept', () => {
-    const { db, conceptId, nodeIds } = makeFixture(2);
-    masterCell(db, nodeIds[0], 1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(2);
+    masterCell(db, userId, nodeIds[0], 1);
     const survivorCellId = getCellId(db, nodeIds[0], 1);
-    const survivorBefore = getCell(db, survivorCellId)!;
+    const survivorBefore = getCellState(db, userId, survivorCellId);
 
     const report = mergeBlueprint(db, conceptId, {
       nodes: [
@@ -452,8 +461,8 @@ describe('AT11 — the blueprint is editable and regeneration merges (invariant 
     expect(report.unmatched).toContain('Node 2');
     expect(listNodes(db, conceptId).map((n) => n.title)).toContain('Node 2');
 
-    const survivorAfter = getCell(db, survivorCellId)!;
-    expect(survivorAfter.id).toBe(survivorBefore.id);
+    expect(getCell(db, survivorCellId)).toBeDefined();
+    const survivorAfter = getCellState(db, userId, survivorCellId);
     expect(survivorAfter.p_mastery).toBeCloseTo(survivorBefore.p_mastery, 10);
     expect(survivorAfter.response_count).toBe(survivorBefore.response_count);
 
@@ -473,9 +482,9 @@ describe('AT11 — the blueprint is editable and regeneration merges (invariant 
 
 describe('depth advancement and D6 promotion', () => {
   it('does not serve depth 2 until 80% of applicable nodes are mastered at depth 1', () => {
-    const { db, conceptId, nodeIds } = makeFixture(5);
+    const { db, userId, conceptId, nodeIds } = makeFixture(5);
 
-    let cells = loadCellSnapshots(db, conceptId);
+    let cells = loadCellSnapshots(db, userId, conceptId);
     let result = assembleSession({
       cells,
       remediationNodeIds: new Set(),
@@ -486,9 +495,9 @@ describe('depth advancement and D6 promotion', () => {
     expect(result.slots.every((s) => s.depth === 1)).toBe(true);
 
     // Master four of five at D1 → 80%.
-    for (const id of nodeIds.slice(0, 4)) masterCell(db, id, 1);
+    for (const id of nodeIds.slice(0, 4)) masterCell(db, userId, id, 1);
 
-    cells = loadCellSnapshots(db, conceptId);
+    cells = loadCellSnapshots(db, userId, conceptId);
     result = assembleSession({
       cells,
       remediationNodeIds: new Set(),
@@ -501,14 +510,16 @@ describe('depth advancement and D6 promotion', () => {
   });
 
   it('a node that fails three consecutive times at depth d drops back to d-1 for that node only', () => {
-    const { db, conceptId, nodeIds } = makeFixture(5);
-    for (const id of nodeIds) masterCell(db, id, 1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(5);
+    for (const id of nodeIds) masterCell(db, userId, id, 1);
 
-    const laggingCell = setCellState(db, nodeIds[0], 2, { pMastery: 0.2, responseCount: 3 });
+    const laggingCell = setCellState(db, userId, nodeIds[0], 2, { pMastery: 0.2, responseCount: 3 });
     // Three trailing incorrect responses at D2 for node 1.
     const session = db
-      .prepare(`INSERT INTO sessions (concept_id, started_at, kind) VALUES (?, ?, 'practice')`)
-      .run(conceptId, '2026-01-01T00:00:00.000Z');
+      .prepare(
+        `INSERT INTO sessions (user_id, concept_id, started_at, kind) VALUES (?, ?, ?, 'practice')`
+      )
+      .run(userId, conceptId, '2026-01-01T00:00:00.000Z');
     const itemInfo = db
       .prepare(
         `INSERT INTO items (cell_id, kind, stem, explanation, generated_at, validated)
@@ -518,9 +529,11 @@ describe('depth advancement and D6 promotion', () => {
     for (let i = 0; i < 3; i++) {
       db.prepare(
         `INSERT INTO responses
-           (session_id, item_id, cell_id, is_correct, confidence, p_mastery_before, p_mastery_after, answered_at)
-         VALUES (?, ?, ?, 0, 'confident', 0.2, 0.2, ?)`
+           (user_id, session_id, item_id, cell_id, is_correct, confidence,
+            p_mastery_before, p_mastery_after, answered_at)
+         VALUES (?, ?, ?, ?, 0, 'confident', 0.2, 0.2, ?)`
       ).run(
+        userId,
         Number(session.lastInsertRowid),
         Number(itemInfo.lastInsertRowid),
         laggingCell,
@@ -528,7 +541,7 @@ describe('depth advancement and D6 promotion', () => {
       );
     }
 
-    const cells = loadCellSnapshots(db, conceptId);
+    const cells = loadCellSnapshots(db, userId, conceptId);
     const { slots } = assembleSession({
       cells,
       remediationNodeIds: new Set(),
@@ -545,12 +558,12 @@ describe('depth advancement and D6 promotion', () => {
   });
 
   it('serves at most one D6 item, and places it last', () => {
-    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { db, userId, conceptId, nodeIds } = makeFixture(3);
     // Master every node at D1-D5 so all three become D6-eligible.
-    for (const id of nodeIds) for (let d = 1; d <= 5; d++) masterCell(db, id, d);
+    for (const id of nodeIds) for (let d = 1; d <= 5; d++) masterCell(db, userId, id, d);
 
     const { slots } = assembleSession({
-      cells: loadCellSnapshots(db, conceptId),
+      cells: loadCellSnapshots(db, userId, conceptId),
       remediationNodeIds: new Set(),
       targetLength: 20,
       now: new Date('2026-01-01T00:00:00.000Z'),
@@ -569,7 +582,7 @@ describe('depth advancement and D6 promotion', () => {
 
 describe('remediation slice driven by active misconceptions', () => {
   it('an active misconception puts its node at the front of the next session', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(4);
+    const { db, userId, conceptId, nodeIds } = makeFixture(4);
     addMisconceptions(db, nodeIds[2]);
     installFakeLlm();
 
@@ -577,7 +590,7 @@ describe('remediation slice driven by active misconceptions', () => {
     const { item } = await generateMcItem(db, cellId);
     const distractor = listOptions(db, item!.id).find((o) => o.is_correct === 0)!;
 
-    const session = startSession(db, conceptId, { length: 10 });
+    const session = startSession(db, userId, conceptId, { length: 10 });
     // Select the same belief twice within the last 20 responses.
     for (let i = 0; i < 2; i++) {
       submitMcResponse(db, {
@@ -590,11 +603,11 @@ describe('remediation slice driven by active misconceptions', () => {
     }
 
     const { activeMisconceptions } = await import('../lib/db/queries');
-    const active = activeMisconceptions(db, conceptId);
+    const active = activeMisconceptions(db, userId, conceptId);
     expect(active.map((m) => m.id)).toContain(distractor.misconception_id);
 
     const { slots } = assembleSession({
-      cells: loadCellSnapshots(db, conceptId),
+      cells: loadCellSnapshots(db, userId, conceptId),
       remediationNodeIds: new Set(active.map((m) => m.node_id)),
       targetLength: 20,
       now: new Date('2026-01-01T00:00:00.000Z'),
@@ -612,11 +625,11 @@ describe('remediation slice driven by active misconceptions', () => {
 
 describe('due queue ordering', () => {
   it('sorts by overdueness, not by absolute lateness', () => {
-    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { db, userId, conceptId, nodeIds } = makeFixture(3);
     const at = new Date('2026-02-01T00:00:00.000Z');
 
     // Short-interval cell three days late: overdueness 3.0
-    setCellState(db, nodeIds[0], 1, {
+    setCellState(db, userId, nodeIds[0], 1, {
       pMastery: 0.5,
       responseCount: 2,
       intervalDays: 1,
@@ -624,7 +637,7 @@ describe('due queue ordering', () => {
       nextDueAt: iso(addDays(at, -3)),
     });
     // Long-interval cell ten days late: overdueness 0.11
-    setCellState(db, nodeIds[1], 1, {
+    setCellState(db, userId, nodeIds[1], 1, {
       pMastery: 0.5,
       responseCount: 2,
       intervalDays: 90,
@@ -633,7 +646,7 @@ describe('due queue ordering', () => {
     });
 
     const { slots } = assembleSession({
-      cells: loadCellSnapshots(db, conceptId),
+      cells: loadCellSnapshots(db, userId, conceptId),
       remediationNodeIds: new Set(),
       targetLength: 10,
       now: at,

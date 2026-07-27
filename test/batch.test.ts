@@ -71,11 +71,11 @@ describe('the batch pipeline', () => {
   });
 
   it('fills a cell end to end: one generation request, one validation per item, items persisted', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { db, userId, conceptId, nodeIds } = makeFixture(2);
     const { handler } = makeFakeLlm();
     const log = installFakeBatch(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
@@ -108,11 +108,11 @@ describe('the batch pipeline', () => {
   });
 
   it('bills every batch call at half rate in the accounting', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handler } = makeFakeLlm();
     installFakeBatch(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
@@ -137,11 +137,11 @@ describe('the batch pipeline', () => {
   });
 
   it('a failed entry is dropped and the shortfall becomes visible again', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handler } = makeFakeLlm();
     const log = installFakeBatch(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
@@ -172,22 +172,22 @@ describe('the batch pipeline', () => {
 
     // Nothing persisted, nothing in flight — the next shortfall pass resubmits.
     expect(cellsInFlight(db).size).toBe(0);
-    const { short } = computeShortfalls(db, [cell.id], { target: 2, maxGenerations: 8 });
+    const { short } = computeShortfalls(db, [userId], [cell.id], { target: 2, maxGenerations: 8 });
     expect(short).toEqual([{ cellId: cell.id, want: 2 }]);
   });
 
   it('the shortfall pass skips cells already in flight', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { db, userId, conceptId, nodeIds } = makeFixture(2);
     const { handler } = makeFakeLlm();
     installFakeBatch(handler);
 
-    const cells = listCells(db, conceptId).filter((c) => c.depth === 1);
+    const cells = listCells(db, userId, conceptId).filter((c) => c.depth === 1);
     const first = cells.find((c) => c.node_id === nodeIds[0])!;
     const second = cells.find((c) => c.node_id === nodeIds[1])!;
 
     await submitGenerationBatch(db, [{ cellId: first.id, want: 3 }]);
 
-    const { short } = computeShortfalls(db, [first.id, second.id], {
+    const { short } = computeShortfalls(db, [userId], [first.id, second.id], {
       target: 3,
       maxGenerations: 8,
       exclude: cellsInFlight(db),
@@ -196,12 +196,12 @@ describe('the batch pipeline', () => {
   });
 
   it('a validator rejection in a batch is logged, not served', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     // The fake validator picks a different option than the key.
     const { handler } = makeFakeLlm({ validatorPicks: 'wrong' });
     installFakeBatch(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 

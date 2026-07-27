@@ -10,7 +10,10 @@ measurement.** This is not an assessment tool that reports a score. It is a trai
 loop in which measurement and treatment are the same operation. Where learning
 outcome and measurement convenience conflict, the code favours the outcome.
 
-Single user, runs locally, SQLite on disk.
+Multi-user, SQLite on disk. **Blueprints and item banks are shared; progress is not.**
+Ask for a topic somebody has already decomposed and you get their map and their bank for
+free, with your own mastery starting where it should — at nothing. Supply your own source
+material and the concept is yours alone.
 
 ---
 
@@ -18,14 +21,22 @@ Single user, runs locally, SQLite on disk.
 
 ```bash
 npm install
-cp .env.example .env.local        # add ANTHROPIC_API_KEY
+cp .env.example .env.local        # add ANTHROPIC_API_KEY, GYM_SESSION_SECRET, GYM_PASSWORD
 npm run dev                       # http://localhost:3000
 npm run worker                    # in a second terminal — keeps the item buffer stocked
 ```
 
+Then open `/signup` and create an account with `GYM_PASSWORD` as the registration code.
+It is needed once, to open an account, and never again to log in — see
+[Accounts](#accounts).
+
 | Variable | Default | |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | required, server-side only |
+| `GYM_SESSION_SECRET` | — | required; signs session cookies. Without it the app refuses to serve |
+| `GYM_PASSWORD` | — | the registration code. Required once per account, never to log in |
+| `GYM_OWNER_EMAIL` | `owner@localhost` | only read when migrating a single-user database |
+| `GYM_ACTIVE_USER_WINDOW_DAYS` | `30` | how long after a session an account is worth pre-generating for |
 | `GYM_STRATEGY` | `shipped` | model assignment preset: `reference` · `shipped` · `split-gate` · `sonnet-gate` · `economy` · `floor` |
 | `GYM_MODEL` | `claude-opus-5` | what a strategy means by "the strong model" |
 | `GYM_MODEL_ITEM` · `_BLUEPRINT` · `_VALIDATE` · `_GRADE` | — | override one call site, beating the strategy |
@@ -42,12 +53,12 @@ npm run worker                    # in a second terminal — keeps the item buff
 To look at the interface without spending tokens:
 
 ```bash
-GYM_DB=./data/demo.db npx tsx scripts/seed-demo.ts
+GYM_DB=./data/demo.db npx tsx scripts/seed-demo.ts   # sign in as demo@localhost / demo-password
 GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 205 tests, no network
+npm test          # 233 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -66,7 +77,8 @@ Three parts, and the directories match:
 
 | Term | Meaning |
 |---|---|
-| **Concept** | The top-level subject. "Socialism". |
+| **User** | An account. Owns progress, never content. |
+| **Concept** | The top-level subject. "Socialism". Shared if it was created from a bare topic name, private to its owner if it was created with source material. |
 | **Blueprint** | The decomposition: nodes plus the depth grid. |
 | **Node** | One sub-concept — the *breadth* axis. |
 | **Depth** | D1–D6, how far from rote — the *depth* axis. Generic across concepts. |
@@ -77,6 +89,13 @@ Three parts, and the directories match:
 | **Mastery** | `p_L`, per cell. **Retrievability** `R` discounts it for time elapsed. |
 | **Benchmark set** | Frozen, human-vetted items never used in practice. |
 
+**Content is shared, progress is not**, and the schema draws that line rather than
+leaving it to callers. `concepts · nodes · cells · misconceptions · items · options` are
+content. `user_cell_state · user_item_seen · user_misconception_state · sessions ·
+responses · session_plan · benchmark_runs` are progress. The two used to be one row:
+`cells` carried the (node, depth) pair *and* the mastery estimate and SM-2 schedule for
+it, which is coherent for exactly one learner and incoherent for two.
+
 The depth ladder: **D1** recall · **D2** comprehension · **D3** application ·
 **D4** boundary · **D5** discrimination · **D6** critique. D1–D5 are multiple choice.
 D6 is free response only — recognition cannot assess critique, and MC'ing it produces
@@ -84,15 +103,18 @@ items that look deep and test nothing.
 
 ```
 /app/api        concepts · blueprint · session · generate/item · grade/free · benchmark · stats · items
-/app/(ui)       concepts · blueprint · session · dashboard · items · benchmark
-/lib/db         better-sqlite3 client, schema, queries
+/app/(ui)       login · signup · concepts · blueprint · session · dashboard · items · benchmark
+/lib/db         better-sqlite3 client, schema, queries, name normalisation
+/lib/auth.ts    session cookies, on Web Crypto so middleware and Node share one path
+/lib/session.ts who is asking — resolved per request from the database, not from a header
+/lib/password.ts scrypt, Node-only
 /lib/llm        provider client, structured output, schema check + retry
 /lib/prompts    one file per prompt contract
 /lib/mastery    BKT update
 /lib/schedule   SM-2 spacing, decay, due queue
 /lib/policy     session assembly, interleaving, depth frontier
 /lib/analysis   item statistics, stem similarity
-/lib/pipeline   blueprint · generateItem · respond · session · buffer · benchmark
+/lib/pipeline   blueprint · generateItem · respond · session · buffer · benchmark · fork
 /workers        pregenerate.ts
 ```
 
@@ -113,11 +135,12 @@ mechanism that makes this a gym rather than a quiz app, and each has a test.
 | 3 | The validator does not see the answer key | `lib/prompts/validate.ts` — `ValidationInput` has no field for it, and the test asserts on the serialized request body | AT3 |
 | 4 | Every distractor is tagged to a named misconception, recorded on selection | `generateItem.ts` inserts an invented label before persisting, so `options.misconception_id` is never null on a distractor | AT4 |
 | 5 | Feedback explains every option, not just the correct one | `ItemCard` renders a rationale per option | AT5 |
-| 6 | Items are never reused verbatim | recent stems go into the prompt, and `analysis/similarity.ts` throws away anything above 0.9 | AT6 |
+| 6 | Items are never reused verbatim *to one learner* | recent stems go into the prompt, `analysis/similarity.ts` throws away anything above 0.9, and `takeBufferedItem` skips anything in that learner's `user_item_seen` | AT6 |
 | 7 | Never two consecutive items from the same node | `policy/interleave.ts` | AT7 |
 | 8 | Scheduling persists and mastery decays with time | `schedule/sm2.ts` + `schedule/decay.ts`; decay is applied at read time and never written back | AT8 |
 | 9 | The free-response grader is uncharitable | `prompts/gradeFree.ts`, plus code-level enforcement in `respond.ts` | AT9 |
 | 10 | Benchmark items never enter practice | the `frozen = 0` predicate is inside `takeBufferedItem`, not applied by callers | AT10 |
+| 12 | One learner's answers move nobody else's record | every mutable number is keyed by `(user_id, …)`; `cells` has no student-model column left to write | `test/multiuser.test.ts` |
 | 11 | The blueprint is editable and revisable | `pipeline/blueprint.ts` merges rather than replaces | AT11 |
 
 A few are worth expanding on.
@@ -140,6 +163,76 @@ actually appears in the answer and downgrades it if not, and recomputes the scor
 the per-criterion verdicts rather than trusting the number the model returned.
 Charitable grading turns a failed retrieval into a passed one, which is the most
 destructive thing this system could do.
+
+---
+
+## Accounts
+
+<a id="accounts"></a>
+
+Progress follows the account rather than the machine, which is the whole point: sign in
+on a second device and the schedule is where you left it. Nothing is kept in the browser
+— the only cookies are the session and the language toggle.
+
+**Signing up needs a code**, and the code is `GYM_PASSWORD` — the variable that used to
+be the entire gate. It is required once to open an account and never again to log in. The
+reason is money rather than secrecy: a new account's first act is usually to create a
+concept, and that is one large Opus call against the deployment's single API key.
+`GYM_MONTHLY_BUDGET_USD` caps only *speculative* generation — sessions deliberately keep
+running past it — so an ungated signup page has no brake on it at all.
+
+The session cookie is `v2.<userId>.<expiry>.<hmac>`, signed with `GYM_SESSION_SECRET`.
+The signature covers the id as well as the expiry, so a cookie cannot be edited into
+somebody else's session. Middleware verifies the signature and stops there — it runs on
+the Edge runtime and cannot open SQLite — and every route and server component resolves
+the account itself through `lib/session.ts`. Middleware is the gate, not the identity.
+
+There is no `GYM_ALLOW_PUBLIC` any more. "Run with no access control" was coherent for a
+single-user tool and is not for one where every row belongs to somebody: an anonymous
+visitor has no record to train on.
+
+---
+
+## Sharing, and what it is worth
+
+The rule is one line: **supplying source material makes a concept yours; asking for a
+bare topic joins the shared one.**
+
+It is not arbitrary. A sourceless concept generates against the canonical, textbook
+version of a topic — the limitation section below has always said so — and those are
+exactly the items that are the same for everybody and so worth writing once. Source
+material is what makes a concept idiosyncratic to one person, so it makes the concept
+theirs. That also disposes of the privacy question without a setting: pasted material is
+never shared, because supplying it is what makes the concept private.
+
+Concepts are matched on a normalised name — case-folded, trimmed, internal whitespace
+collapsed — and a partial unique index makes "one shared concept per name" a database
+constraint rather than a convention two simultaneous signups could break. Deliberately no
+stemming and no fuzzy distance: "LLM" and "Large Language Models" stay separate, because
+silently merging them hands somebody a blueprint they did not ask for.
+
+**An item is served at most once to any one learner and freely to everybody else.** The
+buffer predicate used to be `served_count = 0`: an item cost two model calls, was shown
+once, and was spent for the whole deployment. It is now "not in this learner's
+`user_item_seen`", so the same item can be the first question of somebody's first session
+years after it was written. Generation stays global, and a cell is stocked for whichever
+member of its cohort is furthest through it — taking the maximum instead would multiply
+the bill by the number of people on the concept, which is the thing sharing exists to
+avoid.
+
+**The owner edits, everyone else forks.** A shared blueprint is other people's map, and
+their mastery history is indexed by cells an edit can retire, so `PATCH /api/blueprint`
+is owner-only. Forking copies the nodes, cells and misconceptions, carries your own
+mastery across by (node title, depth), and leaves the original alone. It does not copy
+the items: a concept grounded in your own source should be tested from it, and mixing the
+two would leave the item-health screen unable to tell you which was which.
+
+**What the worker generates ahead for is bounded by who is still turning up.**
+`GYM_LOOKAHEAD_CELLS` caps cells per concept and says nothing about how many concepts;
+without a second bound, one account that signs up, joins four concepts and never returns
+would have its cells stocked and restocked for as long as the deployment lives.
+`GYM_ACTIVE_USER_WINDOW_DAYS` (30) is that bound. A dormant account is not cut off — it
+generates inline when it comes back, at the cost of one wait.
 
 ---
 
@@ -248,10 +341,13 @@ saves nothing. A current Sonnet is the lever that moves.
 
 These are stated in the interface too, next to the numbers they qualify.
 
-**Single-user statistics are thin.** Classical item analysis assumes many test-takers.
-With one person and a handful of administrations, difficulty and discrimination are
-noisy. They are aggregated at the cell level, withheld below n = 5, and labelled
-advisory. Do not read them as measurements.
+**Item statistics are thin until a bank has been used.** Classical item analysis assumes
+many test-takers. A shared bank finally has some — `items.served_count` and
+`options.selected_count` count administrations across everybody, which is why they stayed
+global while everything else was split per learner. They are still noisy until a cell has
+actually been seen a number of times, so they are aggregated at the cell level, withheld
+below n = 5, and labelled advisory. On a concept only you train on, they mean what they
+meant before: very little.
 
 **The blueprint is the weak link.** Every item inherits its errors, and a wrong
 blueprint produces well-formed items testing the wrong things — with scores that look
@@ -326,11 +422,16 @@ into the warning box — wraps instead of turning the page into a horizontal scr
 ## Tests
 
 ```bash
-npm test                 # 205 tests, no network, ~9s
+npm test                 # 233 tests, no network, ~10s
 npm run test:grader      # the grader regression set against the live model
 ```
 
-`npm test` covers every acceptance test in the spec except the live half of AT9, plus the access gate. The
+`npm test` covers every acceptance test in the spec except the live half of AT9, plus the
+access gate, the sharing rule, and the one-way migration off the single-user schema. That
+last one is worth knowing about: `test/migration.test.ts` builds a database with the
+literal schema the previous build wrote — not a reconstruction from the current one — and
+asserts the student model lands on the owner account before the columns are dropped. It
+is the only migration here that cannot be undone. The
 BKT worked examples and the SM-2 progression (1 → 3 → 7.8 → 20.67, ease 2.55 → 2.60 →
 2.65 → 2.70) are asserted exactly, including the ordering subtlety that the third
 interval uses the ease already in effect rather than the default.

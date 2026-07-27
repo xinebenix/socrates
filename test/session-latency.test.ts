@@ -47,7 +47,7 @@ afterEach(() => {
  */
 describe('a session started while a worker batch is pending', () => {
   it('still covers its own plan', async () => {
-    const { db, conceptId } = makeFixture(8);
+    const { db, userId, conceptId } = makeFixture(8);
     const { handler } = makeFakeLlm();
     setTransport(async (req) => {
       await new Promise((r) => setTimeout(r, CALL_MS));
@@ -65,9 +65,9 @@ describe('a session started while a worker batch is pending', () => {
       },
     });
 
-    await submitGenerationBatch(db, dueShortfalls(db, conceptId, { maxGenerations: 40 }));
+    await submitGenerationBatch(db, dueShortfalls(db, [userId], conceptId, { maxGenerations: 40 }));
 
-    const started = startSession(db, conceptId, { length: 20 });
+    const started = startSession(db, userId, conceptId, { length: 20 });
     let waits = 0;
     for (let n = 1; n <= 4; n++) {
       const t0 = Date.now();
@@ -83,14 +83,14 @@ describe('a session started while a worker batch is pending', () => {
 
 describe('a cold session', () => {
   it('makes the learner wait once, and buys each item exactly once', async () => {
-    const { db, conceptId } = makeFixture(8);
+    const { db, userId, conceptId } = makeFixture(8);
     const { handle, handler } = makeFakeLlm();
     setTransport(async (req) => {
       await new Promise((r) => setTimeout(r, CALL_MS));
       return handler(req);
     });
 
-    const started = startSession(db, conceptId, { length: 20 });
+    const started = startSession(db, userId, conceptId, { length: 20 });
     const plan = listSessionPlan(db, started.sessionId);
     const distinctCells = new Set(plan.map((p) => p.cell_id)).size;
     expect(plan.length).toBe(20);

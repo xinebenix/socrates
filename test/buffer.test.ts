@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeFakeLlm } from './fakeLlm';
-import { makeFixture } from './helpers';
+import { makeFixture, serveItems } from './helpers';
 import { setTransport } from '../lib/llm/client';
 import {
   bufferConcurrency,
@@ -37,6 +37,15 @@ afterEach(() => {
   delete process.env.GYM_BUFFER_REFILL_AT;
 });
 
+/**
+ * Items of a cell this learner has not answered — the predicate the buffer now runs on.
+ * `served_count = 0` used to mean the same thing and no longer does: an item served to
+ * somebody else is still fresh for you.
+ */
+const unseenSql = `SELECT COUNT(*) AS n FROM items i
+  WHERE i.cell_id = ? AND i.validated = 1 AND i.frozen = 0 AND i.retired = 0
+    AND NOT EXISTS (SELECT 1 FROM user_item_seen s WHERE s.user_id = ? AND s.item_id = i.id)`;
+
 describe('the set-size dial', () => {
   it('defaults to 3 and is raisable up to the per-call ceiling', () => {
     expect(bufferTarget()).toBe(3);
@@ -56,15 +65,15 @@ describe('the set-size dial', () => {
   });
 
   it('writes a raised target in a single call', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
-    await topUpBuffer(db, conceptId, {
+    await topUpBuffer(db, [userId], conceptId, {
       priorityCellIds: [cell.id],
       target: 8,
       maxGenerations: 8,
@@ -81,17 +90,17 @@ describe('the set-size dial', () => {
   });
 
   it('never splits one cell across two calls to fit a tick budget', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { db, userId, conceptId, nodeIds } = makeFixture(2);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
     // Budget smaller than the target: the cell still goes in one call, because
     // clipping it would turn one cheap call into two expensive ones.
-    await topUpBuffer(db, conceptId, {
+    await topUpBuffer(db, [userId], conceptId, {
       priorityCellIds: [cell.id],
       target: 6,
       maxGenerations: 2,
@@ -109,22 +118,22 @@ describe('the set-size dial', () => {
 
 describe('serving a session never builds depth', () => {
   it('warms exactly what the plan needs, counting cells that appear twice', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { db, userId, conceptId, nodeIds } = makeFixture(3);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cells = listCells(db, conceptId).filter((c) => c.depth === 1);
+    const cells = listCells(db, userId, conceptId).filter((c) => c.depth === 1);
     const twice = cells.find((c) => c.node_id === nodeIds[0])!;
     const once = cells.find((c) => c.node_id === nodeIds[1])!;
 
     // A plan where one cell serves two slots.
-    await fillSessionNeed(db, conceptId, [twice.id, once.id, twice.id], { concurrency: 1 });
+    await fillSessionNeed(db, userId, conceptId, [twice.id, once.id, twice.id], { concurrency: 1 });
 
     const count = (cellId: number) =>
       (
         db
-          .prepare(`SELECT COUNT(*) AS n FROM items WHERE cell_id = ? AND served_count = 0`)
-          .get(cellId) as { n: number }
+          .prepare(unseenSql)
+          .get(cellId, userId) as { n: number }
       ).n;
 
     expect(count(twice.id)).toBe(2);
@@ -139,12 +148,12 @@ describe('serving a session never builds depth', () => {
     // session hit inline generation partway through — the same visible symptom as
     // the churn it was meant to fix, just later in the session.
     for (const nodeCount of [3, 8, 12]) {
-      const { db, conceptId } = makeFixture(nodeCount);
+      const { db, userId, conceptId } = makeFixture(nodeCount);
       const { handler } = makeFakeLlm();
       setTransport(handler);
 
       const { slots } = assembleSession({
-        cells: loadCellSnapshots(db, conceptId),
+        cells: loadCellSnapshots(db, userId, conceptId),
         remediationNodeIds: new Set(),
         targetLength: clampSessionLength(20),
         now: now(),
@@ -153,11 +162,11 @@ describe('serving a session never builds depth', () => {
       const plan = slots.map((s) => s.cellId);
       expect(plan.length).toBe(20);
 
-      await fillSessionNeed(db, conceptId, plan);
+      await fillSessionNeed(db, userId, conceptId, plan);
 
       let uncovered = 0;
       for (const [cellId, n] of planNeed(plan)) {
-        uncovered += Math.max(0, n - countReadyItems(db, cellId));
+        uncovered += Math.max(0, n - countReadyItems(db, userId, cellId));
       }
       expect(uncovered, `${nodeCount} nodes left ${uncovered} slots uncovered`).toBe(0);
     }
@@ -168,25 +177,22 @@ describe('serving a session never builds depth', () => {
     // fresh generation. It happened because the warm pass filled each cell to 1
     // while the refill pass measured against GYM_BUFFER_TARGET, so every warmed
     // cell read as depleted the moment the session began.
-    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { db, userId, conceptId, nodeIds } = makeFixture(3);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
     process.env.GYM_BUFFER_TARGET = '10';
 
-    const cells = listCells(db, conceptId).filter((c) => c.depth === 1);
+    const cells = listCells(db, userId, conceptId).filter((c) => c.depth === 1);
     const plan = [cells[0].id, cells[1].id, cells[2].id];
 
-    await fillSessionNeed(db, conceptId, plan, { concurrency: 1 });
+    await fillSessionNeed(db, userId, conceptId, plan, { concurrency: 1 });
     const afterWarm = handle.calls.filter((c) => c.kind === 'item-mc').length;
     expect(afterWarm).toBe(3);
 
     // Serve the first slot, then do what the answer path does: cover what remains.
-    db.prepare(
-      `UPDATE items SET served_count = 1 WHERE id = (
-         SELECT id FROM items WHERE cell_id = ? LIMIT 1)`
-    ).run(cells[0].id);
+    serveItems(db, userId, cells[0].id, 1);
 
-    await fillSessionNeed(db, conceptId, [cells[1].id, cells[2].id], { concurrency: 1 });
+    await fillSessionNeed(db, userId, conceptId, [cells[1].id, cells[2].id], { concurrency: 1 });
 
     expect(handle.calls.filter((c) => c.kind === 'item-mc').length).toBe(afterWarm);
   });
@@ -195,21 +201,21 @@ describe('serving a session never builds depth', () => {
     // The bug this pins: the ready-count hardcoded kind='mc', and a D6 cell's items
     // are kind='free'. It therefore always counted as empty, so every top-up bought
     // another D6 item — one per answered question, forever.
-    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { db, userId, conceptId, nodeIds } = makeFixture(2);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const d6 = listCells(db, conceptId).find(
+    const d6 = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 6
     )!;
 
-    await fillSessionNeed(db, conceptId, [d6.id], { concurrency: 1 });
+    await fillSessionNeed(db, userId, conceptId, [d6.id], { concurrency: 1 });
     const first = handle.calls.filter((c) => c.kind === 'item-free').length;
     expect(first).toBe(1);
 
     // Three more passes over a plan that still wants one D6 item, which is banked.
     for (let i = 0; i < 3; i++) {
-      await fillSessionNeed(db, conceptId, [d6.id], { concurrency: 1 });
+      await fillSessionNeed(db, userId, conceptId, [d6.id], { concurrency: 1 });
     }
 
     expect(handle.calls.filter((c) => c.kind === 'item-free').length).toBe(first);
@@ -220,7 +226,7 @@ describe('serving a session never builds depth', () => {
     // Both passes saw the same cells as short and both generated them: a 10-slot plan
     // bought 20 items. cellsInFlight only covers batches, which are persisted;
     // synchronous fills needed their own in-process reservation.
-    const { db, conceptId } = makeFixture(6);
+    const { db, userId, conceptId } = makeFixture(6);
     const { handle, handler } = makeFakeLlm();
 
     // Latency is what opens the window; instant replies hide the race entirely.
@@ -229,7 +235,7 @@ describe('serving a session never builds depth', () => {
       return handler(req);
     });
 
-    const started = startSession(db, conceptId, { length: 10 });
+    const started = startSession(db, userId, conceptId, { length: 10 });
     const plan = listSessionPlan(db, started.sessionId);
     expect(plan.length).toBe(10);
 
@@ -258,11 +264,11 @@ describe('serving a session never builds depth', () => {
     // items are deliberately not counted as ready (invariant 10). The buffer therefore
     // read every benchmark slot as empty and generated a practice item for it — items
     // that run would never serve. Pure waste, on every benchmark.
-    const { db, conceptId, nodeIds } = makeFixture(3);
+    const { db, userId, conceptId, nodeIds } = makeFixture(3);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cells = listCells(db, conceptId).filter((c) => c.depth <= 5);
+    const cells = listCells(db, userId, conceptId).filter((c) => c.depth <= 5);
     // Three frozen, vetted items — the benchmark set.
     for (const cell of cells.slice(0, 3)) {
       const info = db
@@ -280,7 +286,7 @@ describe('serving a session never builds depth', () => {
       }
     }
 
-    const run = startBenchmarkRun(db, conceptId);
+    const run = startBenchmarkRun(db, userId, conceptId);
     expect(run.itemCount).toBe(3);
     const before = handle.calls.length;
 
@@ -306,11 +312,11 @@ describe('serving a session never builds depth', () => {
     //
     // A duplicate item costs cents and lands in the buffer for next time. A session
     // that makes the learner wait on every question costs the product.
-    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { db, userId, conceptId, nodeIds } = makeFixture(2);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
@@ -323,7 +329,7 @@ describe('serving a session never builds depth', () => {
       })
     );
 
-    const report = await fillSessionNeed(db, conceptId, [cell.id], { concurrency: 1 });
+    const report = await fillSessionNeed(db, userId, conceptId, [cell.id], { concurrency: 1 });
 
     expect(report.generated).toBe(1);
     expect(handle.calls.filter((c) => c.kind === 'item-mc')).toHaveLength(1);
@@ -332,21 +338,21 @@ describe('serving a session never builds depth', () => {
   it('skips a cell another synchronous pass is already writing', async () => {
     // A synchronous generation lands in seconds, and nextItem can await it — so this
     // one really is coverage, and generating again would buy the same items twice.
-    const { db, conceptId, nodeIds } = makeFixture(2);
+    const { db, userId, conceptId, nodeIds } = makeFixture(2);
     const { handle, handler } = makeFakeLlm();
     setTransport(async (req) => {
       await new Promise((r) => setTimeout(r, 25));
       return handler(req);
     });
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
     // Two overlapping fills, the second started without awaiting the first.
     const [a, b] = await Promise.all([
-      fillSessionNeed(db, conceptId, [cell.id], { concurrency: 1 }),
-      fillSessionNeed(db, conceptId, [cell.id], { concurrency: 1 }),
+      fillSessionNeed(db, userId, conceptId, [cell.id], { concurrency: 1 }),
+      fillSessionNeed(db, userId, conceptId, [cell.id], { concurrency: 1 }),
     ]);
 
     expect(a.generated + b.generated).toBe(1);
@@ -381,33 +387,27 @@ describe('the low-water mark', () => {
 
   it('does nothing on a cell still above the mark, at the shipped default target', async () => {
     // The regression the old test missed by only ever exercising target 10.
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
     const gens = () => handle.calls.filter((c) => c.kind === 'item-mc').length;
     const fill = () =>
-      topUpBuffer(db, conceptId, { priorityCellIds: [cell.id], concurrency: 1 });
+      topUpBuffer(db, [userId], conceptId, { priorityCellIds: [cell.id], concurrency: 1 });
 
     await fill();
     expect(gens()).toBe(1);
 
     // Serve one of three. Two remain, above the mark of 1 — no refill.
-    db.prepare(
-      `UPDATE items SET served_count = 1 WHERE id = (
-         SELECT id FROM items WHERE cell_id = ? AND served_count = 0 LIMIT 1)`
-    ).run(cell.id);
+    serveItems(db, userId, cell.id, 1);
     await fill();
     expect(gens()).toBe(1);
 
     // Serve a second. One remains, at the mark — one refill, asking for two.
-    db.prepare(
-      `UPDATE items SET served_count = 1 WHERE id = (
-         SELECT id FROM items WHERE cell_id = ? AND served_count = 0 LIMIT 1)`
-    ).run(cell.id);
+    serveItems(db, userId, cell.id, 1);
     await fill();
     expect(gens()).toBe(2);
 
@@ -435,28 +435,22 @@ describe('the low-water mark', () => {
   });
 
   it('leaves a partly-drained cell alone, then refills it in one call', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
     const fill = () =>
-      topUpBuffer(db, conceptId, {
+      topUpBuffer(db, [userId], conceptId, {
         priorityCellIds: [cell.id],
         target: 10,
         maxGenerations: 10,
         concurrency: 1,
       });
     const genCalls = () => handle.calls.filter((c) => c.kind === 'item-mc').length;
-    const serve = (n: number) =>
-      db
-        .prepare(
-          `UPDATE items SET served_count = 1 WHERE id IN (
-             SELECT id FROM items WHERE cell_id = ? AND served_count = 0 LIMIT ?)`
-        )
-        .run(cell.id, n);
+    const serve = (n: number) => serveItems(db, userId, cell.id, n);
 
     await fill();
     expect(genCalls()).toBe(1);
@@ -483,22 +477,22 @@ describe('the low-water mark', () => {
     expect(asked).toBe('6');
 
     const ready = db
-      .prepare(`SELECT COUNT(*) AS n FROM items WHERE cell_id = ? AND served_count = 0`)
-      .get(cell.id) as { n: number };
+      .prepare(unseenSql)
+      .get(cell.id, userId) as { n: number };
     expect(ready.n).toBe(10);
   });
 
   it('refills an empty cell regardless of the mark', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
     process.env.GYM_BUFFER_REFILL_AT = '0';
-    await topUpBuffer(db, conceptId, {
+    await topUpBuffer(db, [userId], conceptId, {
       priorityCellIds: [cell.id],
       target: 5,
       maxGenerations: 5,
@@ -529,12 +523,12 @@ describe('failure reporting', () => {
   });
 
   it('surfaces through the outcome when every candidate is rejected', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     // A validator that always disagrees with the key rejects everything.
     const { handler } = makeFakeLlm({ validatorPicks: 'wrong' });
     setTransport(handler);
 
-    const cell = listCells(db, conceptId).find(
+    const cell = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
@@ -566,7 +560,7 @@ describe('the concurrency dial', () => {
 
 describe('topUpBuffer', () => {
   it('keeps more than one generation in flight, up to the limit it was given', async () => {
-    const { db, conceptId } = makeFixture(6);
+    const { db, userId, conceptId } = makeFixture(6);
     const { handler } = makeFakeLlm();
 
     let inFlight = 0;
@@ -583,7 +577,7 @@ describe('topUpBuffer', () => {
       }
     });
 
-    const report = await topUpBuffer(db, conceptId, { maxGenerations: 6, concurrency: 3 });
+    const report = await topUpBuffer(db, [userId], conceptId, { maxGenerations: 6, concurrency: 3 });
 
     expect(report.generated).toBeGreaterThan(1);
     expect(peak).toBeGreaterThan(1);
@@ -591,7 +585,7 @@ describe('topUpBuffer', () => {
   });
 
   it('is serial when told to be', async () => {
-    const { db, conceptId } = makeFixture(4);
+    const { db, userId, conceptId } = makeFixture(4);
     const { handler } = makeFakeLlm();
 
     let inFlight = 0;
@@ -607,12 +601,12 @@ describe('topUpBuffer', () => {
       }
     });
 
-    await topUpBuffer(db, conceptId, { maxGenerations: 3, concurrency: 1 });
+    await topUpBuffer(db, [userId], conceptId, { maxGenerations: 3, concurrency: 1 });
     expect(peak).toBe(1);
   });
 
   it('does not let one failing cell abort the rest of the batch', async () => {
-    const { db, conceptId } = makeFixture(4);
+    const { db, userId, conceptId } = makeFixture(4);
     const { handler } = makeFakeLlm();
 
     let seen = 0;
@@ -622,23 +616,23 @@ describe('topUpBuffer', () => {
       return handler(req);
     });
 
-    const report = await topUpBuffer(db, conceptId, { maxGenerations: 4, concurrency: 2 });
+    const report = await topUpBuffer(db, [userId], conceptId, { maxGenerations: 4, concurrency: 2 });
 
     expect(report.failed).toBeGreaterThan(0);
     expect(report.generated).toBeGreaterThan(0);
   });
 
   it('fills a priority cell before anything the default ordering would have picked', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(6);
+    const { db, userId, conceptId, nodeIds } = makeFixture(6);
     const { handler } = makeFakeLlm();
     setTransport(handler);
 
     // A cell from the last node — low in the default plausibly-due ordering.
-    const target = listCells(db, conceptId).find(
+    const target = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[5] && c.depth === 1
     )!;
 
-    await topUpBuffer(db, conceptId, {
+    await topUpBuffer(db, [userId], conceptId, {
       maxGenerations: 2,
       concurrency: 1,
       priorityCellIds: [target.id],
@@ -652,15 +646,15 @@ describe('topUpBuffer', () => {
   });
 
   it('fills a cell to its target in ONE generation call, not one per item', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const target = listCells(db, conceptId).find(
+    const target = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
-    await topUpBuffer(db, conceptId, {
+    await topUpBuffer(db, [userId], conceptId, {
       priorityCellIds: [target.id],
       target: 3,
       maxGenerations: 3,
@@ -686,15 +680,15 @@ describe('topUpBuffer', () => {
   });
 
   it('asks for exactly the shortfall, not the whole target', async () => {
-    const { db, conceptId, nodeIds } = makeFixture(1);
+    const { db, userId, conceptId, nodeIds } = makeFixture(1);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const target = listCells(db, conceptId).find(
+    const target = listCells(db, userId, conceptId).find(
       (c) => c.node_id === nodeIds[0] && c.depth === 1
     )!;
 
-    await topUpBuffer(db, conceptId, {
+    await topUpBuffer(db, [userId], conceptId, {
       priorityCellIds: [target.id],
       target: 2,
       maxGenerations: 2,
@@ -704,7 +698,7 @@ describe('topUpBuffer', () => {
 
     // Two are banked against a target of 4, whose mark is 2 — so the cell is at the
     // mark and refills by exactly its shortfall, two, not the whole target.
-    await topUpBuffer(db, conceptId, {
+    await topUpBuffer(db, [userId], conceptId, {
       priorityCellIds: [target.id],
       target: 4,
       maxGenerations: 4,
@@ -720,11 +714,11 @@ describe('topUpBuffer', () => {
   });
 
   it('generates nothing when every cell already holds the target', async () => {
-    const { db, conceptId } = makeFixture(3);
+    const { db, userId, conceptId } = makeFixture(3);
     const { handle, handler } = makeFakeLlm();
     setTransport(handler);
 
-    const report = await topUpBuffer(db, conceptId, { maxGenerations: 4, target: 0 });
+    const report = await topUpBuffer(db, [userId], conceptId, { maxGenerations: 4, target: 0 });
 
     expect(report.generated).toBe(0);
     expect(report.skipped).toBeGreaterThan(0);

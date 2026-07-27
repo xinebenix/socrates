@@ -2,7 +2,9 @@
  * The access gate.
  *
  * The spec assumes a tool running on localhost. Deploying it to a public URL is a
- * change of threat model, and these are the properties that change has to preserve.
+ * change of threat model, and accounts are a second one: the cookie now names a person,
+ * and everything downstream trusts that name. These are the properties both changes have
+ * to preserve.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -12,7 +14,7 @@ import {
   isAuthorized,
   isPublicPath,
   mintSession,
-  passwordMatches,
+  secretMatches,
   timingSafeEqualHex,
   verifySession,
   SESSION_TTL_MS,
@@ -21,47 +23,51 @@ import {
 const NOW = Date.parse('2026-01-01T00:00:00.000Z');
 
 describe('configuration', () => {
-  it('treats blank and whitespace passwords as absent', () => {
-    expect(authConfig({}).password).toBeNull();
-    expect(authConfig({ GYM_PASSWORD: '' }).password).toBeNull();
-    expect(authConfig({ GYM_PASSWORD: '   ' }).password).toBeNull();
-    expect(authConfig({ GYM_PASSWORD: ' hunter2 ' }).password).toBe('hunter2');
+  it('treats blank and whitespace secrets as absent', () => {
+    expect(authConfig({}).sessionSecret).toBeNull();
+    expect(authConfig({ GYM_SESSION_SECRET: '' }).sessionSecret).toBeNull();
+    expect(authConfig({ GYM_SESSION_SECRET: '   ' }).sessionSecret).toBeNull();
+    expect(authConfig({ GYM_SESSION_SECRET: ' s3cret ' }).sessionSecret).toBe('s3cret');
   });
 
-  it('requires the exact opt-out value to allow public access', () => {
-    expect(authConfig({ GYM_ALLOW_PUBLIC: '1' }).allowPublic).toBe(true);
-    for (const v of ['true', 'yes', '0', '', 'TRUE']) {
-      expect(authConfig({ GYM_ALLOW_PUBLIC: v }).allowPublic).toBe(false);
-    }
+  it('reads GYM_PASSWORD as the registration code, not a login credential', () => {
+    expect(authConfig({}).signupCode).toBeNull();
+    expect(authConfig({ GYM_PASSWORD: '  ' }).signupCode).toBeNull();
+    expect(authConfig({ GYM_PASSWORD: ' let-me-in ' }).signupCode).toBe('let-me-in');
   });
 });
 
 describe('the gate fails closed', () => {
-  it('refuses to serve when no password is set and public access was not chosen', () => {
+  it('refuses to serve when no session secret is set', () => {
     const decision = gate(authConfig({}), '/concepts', false);
     expect(decision.action).toBe('deny');
     if (decision.action === 'deny') {
       expect(decision.status).toBe(503);
-      expect(decision.message).toMatch(/GYM_PASSWORD/);
+      expect(decision.message).toMatch(/GYM_SESSION_SECRET/);
     }
   });
 
-  it('serves openly only when that was chosen explicitly', () => {
-    expect(gate(authConfig({ GYM_ALLOW_PUBLIC: '1' }), '/concepts', false).action).toBe('allow');
+  it('has no way to be opened to the public', () => {
+    // GYM_ALLOW_PUBLIC is gone. With accounts there is no coherent "no identity" mode:
+    // every row belongs to somebody, so an anonymous visitor has no record to train on.
+    const decision = gate(authConfig({ GYM_ALLOW_PUBLIC: '1' }), '/concepts', false);
+    expect(decision.action).toBe('deny');
   });
 
   it('redirects an unauthenticated visitor to the login page', () => {
-    const decision = gate(authConfig({ GYM_PASSWORD: 'pw' }), '/dashboard/1', false);
+    const decision = gate(authConfig({ GYM_SESSION_SECRET: 'k' }), '/dashboard/1', false);
     expect(decision).toEqual({ action: 'redirect', to: '/login' });
   });
 
   it('lets a valid session through', () => {
-    expect(gate(authConfig({ GYM_PASSWORD: 'pw' }), '/dashboard/1', true).action).toBe('allow');
+    expect(gate(authConfig({ GYM_SESSION_SECRET: 'k' }), '/dashboard/1', true).action).toBe('allow');
   });
 
-  it('keeps the public surface to the login page, the auth route and liveness', () => {
+  it('keeps the public surface to sign-in, sign-up, the auth routes and liveness', () => {
     expect(isPublicPath('/login')).toBe(true);
+    expect(isPublicPath('/signup')).toBe(true);
     expect(isPublicPath('/api/auth')).toBe(true);
+    expect(isPublicPath('/api/auth/signup')).toBe(true);
     expect(isPublicPath('/api/health/live')).toBe(true);
 
     // Everything that touches data or spends tokens stays behind the gate.
@@ -90,56 +96,78 @@ describe('the gate fails closed', () => {
 });
 
 describe('session tokens', () => {
-  it('round-trips a freshly minted token', async () => {
-    const token = await mintSession('correct horse', NOW);
-    expect(await verifySession('correct horse', token, NOW)).toBe(true);
+  it('round-trips a freshly minted token and names the account', async () => {
+    const token = await mintSession('correct horse', 7, NOW);
+    expect(await verifySession('correct horse', token, NOW)).toEqual({
+      userId: 7,
+      expiresAtMs: NOW + SESSION_TTL_MS,
+    });
   });
 
-  it('rejects a token signed with a different password', async () => {
-    const token = await mintSession('correct horse', NOW);
-    expect(await verifySession('battery staple', token, NOW)).toBe(false);
+  it('rejects a token signed with a different secret', async () => {
+    const token = await mintSession('correct horse', 1, NOW);
+    expect(await verifySession('battery staple', token, NOW)).toBeNull();
   });
 
   it('rejects an expired token', async () => {
-    const token = await mintSession('pw', NOW);
-    expect(await verifySession('pw', token, NOW + SESSION_TTL_MS + 1)).toBe(false);
+    const token = await mintSession('k', 1, NOW);
+    expect(await verifySession('k', token, NOW + SESSION_TTL_MS + 1)).toBeNull();
   });
 
   it('rejects a token whose expiry has been edited', async () => {
-    const token = await mintSession('pw', NOW);
-    const [, , sig] = token.split('.');
-    const forged = `v1.${NOW + SESSION_TTL_MS * 10}.${sig}`;
-    expect(await verifySession('pw', forged, NOW)).toBe(false);
+    const token = await mintSession('k', 1, NOW);
+    const [, , , sig] = token.split('.');
+    const forged = `v2.1.${NOW + SESSION_TTL_MS * 10}.${sig}`;
+    expect(await verifySession('k', forged, NOW)).toBeNull();
+  });
+
+  it('rejects a token edited into another account', async () => {
+    // The whole reason the signature covers the id. Without this, changing one digit of
+    // your own cookie would hand you somebody else's entire learning record.
+    const token = await mintSession('k', 1, NOW);
+    const [, , exp, sig] = token.split('.');
+    expect(await verifySession('k', `v2.2.${exp}.${sig}`, NOW)).toBeNull();
   });
 
   it('rejects malformed, empty and missing tokens', async () => {
-    for (const t of [null, undefined, '', 'garbage', 'v1.123', 'v2.123.abc', '..']) {
-      expect(await verifySession('pw', t as string | null, NOW)).toBe(false);
+    for (const t of [
+      null,
+      undefined,
+      '',
+      'garbage',
+      'v2.1.123',
+      'v1.123.abc',
+      'v2.abc.123.def',
+      'v2.0.123.def',
+      'v2.-1.123.def',
+      '...',
+    ]) {
+      expect(await verifySession('k', t as string | null, NOW)).toBeNull();
     }
   });
 
   it('carries no secret in the cookie value', async () => {
-    const token = await mintSession('sup3r-s3cret', NOW);
+    const token = await mintSession('sup3r-s3cret', 1, NOW);
     expect(token).not.toContain('sup3r-s3cret');
   });
 
-  it('cannot be verified at all when no password is configured', async () => {
-    const token = await mintSession('pw', NOW);
-    expect(await verifySession(null, token, NOW)).toBe(false);
+  it('cannot be verified at all when no secret is configured', async () => {
+    const token = await mintSession('k', 1, NOW);
+    expect(await verifySession(null, token, NOW)).toBeNull();
   });
 });
 
-describe('password comparison', () => {
+describe('secret comparison', () => {
   it('accepts only an exact match', async () => {
-    expect(await passwordMatches('hunter2', 'hunter2')).toBe(true);
-    expect(await passwordMatches('hunter2', 'hunter3')).toBe(false);
-    expect(await passwordMatches('hunter2', 'hunter')).toBe(false);
-    expect(await passwordMatches('hunter2', 'hunter22')).toBe(false);
-    expect(await passwordMatches('hunter2', '')).toBe(false);
+    expect(await secretMatches('hunter2', 'hunter2')).toBe(true);
+    expect(await secretMatches('hunter2', 'hunter3')).toBe(false);
+    expect(await secretMatches('hunter2', 'hunter')).toBe(false);
+    expect(await secretMatches('hunter2', 'hunter22')).toBe(false);
+    expect(await secretMatches('hunter2', '')).toBe(false);
   });
 
   it('compares digests, so a length difference is not a shortcut', async () => {
-    expect(await passwordMatches('a', 'a'.repeat(500))).toBe(false);
+    expect(await secretMatches('a', 'a'.repeat(500))).toBe(false);
   });
 
   it('the hex comparison is length-guarded and difference-accumulating', () => {
@@ -151,7 +179,7 @@ describe('password comparison', () => {
 });
 
 describe('the health token is scoped to diagnostics only', () => {
-  const config = authConfig({ GYM_PASSWORD: 'pw', GYM_HEALTH_TOKEN: 'tok' });
+  const config = authConfig({ GYM_SESSION_SECRET: 'k', GYM_HEALTH_TOKEN: 'tok' });
   const bearer = 'Bearer tok';
 
   it('unlocks /api/health', async () => {
@@ -178,12 +206,12 @@ describe('the health token is scoped to diagnostics only', () => {
   });
 
   it('is inert when no health token is configured', async () => {
-    const noTok = authConfig({ GYM_PASSWORD: 'pw' });
+    const noTok = authConfig({ GYM_SESSION_SECRET: 'k' });
     expect(await isAuthorized(noTok, '/api/health', null, bearer, NOW)).toBe(false);
   });
 
   it('a session cookie still reaches everything', async () => {
-    const token = await mintSession('pw', NOW);
+    const token = await mintSession('k', 1, NOW);
     expect(await isAuthorized(config, '/api/concepts', token, null, NOW)).toBe(true);
     expect(await isAuthorized(config, '/api/health', token, null, NOW)).toBe(true);
   });
