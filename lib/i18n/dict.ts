@@ -367,7 +367,16 @@ export const zh: Dict = {
   },
   concepts: {
     topbarSubtitle: '无尽的心智练习之馆',
-    eyebrow: '考察，自一概念始',
+    /*
+     * 《礼记·大学》: "致知在格物。物格而后知至。"
+     *
+     * The one line here that is not a translation of its English pair. "The examination
+     * begins with a subject" came across as 考察，自一概念始 — accurate, and audibly a
+     * translation. The Chinese tradition already has this claim, stated better and 2,000
+     * years earlier: knowledge is extended by examining a thing. It is the premise the
+     * whole application rests on, so it stands as the original rather than as a gloss.
+     */
+    eyebrow: '致知在格物',
     heading: '这一回要{emphasis}的，是什么？',
     headingEmphasis: '弄明白',
     lede: '写下一个概念，贴上你正读的材料——我不讲授，只拆解、发问，一再回到你尚未把握之处。',
