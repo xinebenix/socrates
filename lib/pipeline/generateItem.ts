@@ -145,6 +145,9 @@ export async function generateMcItems(
       })
     );
 
+    // Taken off the request rather than recomputed from modelFor(): what was actually
+    // sent is the only honest answer, and it is what the pin changes.
+    const genModel = String(generated.request.model ?? '');
     const candidates = generated.data.items ?? [];
     if (candidates.length === 0) {
       rejections.push({ reasons: ['generator returned no items'], verdict: emptyVerdict() });
@@ -222,7 +225,9 @@ export async function generateMcItems(
         continue;
       }
 
-      accepted.push(persistMcItem(db, { cellId, nodeId: ctx.node.id, gen, order, verdict }));
+      accepted.push(
+        persistMcItem(db, { cellId, nodeId: ctx.node.id, gen, order, verdict, genModel })
+      );
       acceptedStems.push(gen.stem);
     }
   }
@@ -263,6 +268,8 @@ interface PersistMcInput {
   gen: McItemOut;
   order: number[];
   verdict: ValidatorVerdict;
+  /** The model that wrote it, recorded on the row. Not the validator's. */
+  genModel?: string | null;
 }
 
 export function persistMcItem(db: Db, input: PersistMcInput): ItemRow {
@@ -271,10 +278,17 @@ export function persistMcItem(db: Db, input: PersistMcInput): ItemRow {
   const tx = db.transaction(() => {
     const info = db
       .prepare(
-        `INSERT INTO items (cell_id, kind, stem, explanation, generated_at, validated, validator_json)
-         VALUES (?, 'mc', ?, ?, ?, 1, ?)`
+        `INSERT INTO items (cell_id, kind, stem, explanation, generated_at, validated, validator_json, gen_model)
+         VALUES (?, 'mc', ?, ?, ?, 1, ?, ?)`
       )
-      .run(cellId, gen.stem, gen.explanation, iso(now()), JSON.stringify(verdict));
+      .run(
+        cellId,
+        gen.stem,
+        gen.explanation,
+        iso(now()),
+        JSON.stringify(verdict),
+        input.genModel ?? null
+      );
     const itemId = Number(info.lastInsertRowid);
 
     const insertOption = db.prepare(
@@ -359,15 +373,16 @@ export async function generateFreeItem(db: Db, cellId: number): Promise<Generati
 
     const info = db
       .prepare(
-        `INSERT INTO items (cell_id, kind, stem, explanation, rubric_json, generated_at, validated)
-         VALUES (?, 'free', ?, ?, ?, ?, 1)`
+        `INSERT INTO items (cell_id, kind, stem, explanation, rubric_json, generated_at, validated, gen_model)
+         VALUES (?, 'free', ?, ?, ?, ?, 1, ?)`
       )
       .run(
         cellId,
         gen.stem,
         'Graded against the rubric below. Each criterion is checked against what the answer literally says.',
         JSON.stringify(gen.rubric),
-        iso(now())
+        iso(now()),
+        String(generated.request.model ?? '') || null
       );
 
     const item = db

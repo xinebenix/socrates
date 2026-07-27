@@ -61,6 +61,8 @@ export interface ItemRow {
   frozen: number;
   retired: number;
   served_count: number;
+  /** The model that wrote it. Null for items generated before the column existed. */
+  gen_model: string | null;
 }
 
 export interface OptionRow {

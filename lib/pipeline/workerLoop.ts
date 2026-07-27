@@ -91,6 +91,14 @@ export async function tick(maxGenerationsPerConcept = tickBudget()): Promise<voi
   // The worker's fills are speculative by definition, so they go through the Batch
   // API at half price when it is available. Results land a tick or two later, which
   // a buffer can afford; the session's own paths stay synchronous.
+  //
+  // Batching also turns itself off while a model pin routes the speculative path off
+  // Anthropic (see batchingEnabled). Anything already in flight when that happens is
+  // left alone rather than drained: the provider is still working on it, the tokens
+  // are already committed, and the first tick after the pin is cleared collects them.
+  // Meanwhile those cells stop being excluded from the synchronous fill, so the buffer
+  // keeps filling and the worst case is a surplus of items — which is not a failure
+  // mode, it is a buffer.
   if (batchingEnabled()) {
     try {
       const progress = await processBatches(db);

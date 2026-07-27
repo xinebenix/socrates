@@ -67,7 +67,12 @@ CREATE TABLE IF NOT EXISTS items (
   validator_json TEXT,
   frozen         INTEGER NOT NULL DEFAULT 0,
   retired        INTEGER NOT NULL DEFAULT 0,
-  served_count   INTEGER NOT NULL DEFAULT 0
+  served_count   INTEGER NOT NULL DEFAULT 0,
+  -- Which model wrote it. Null for everything generated before this column existed.
+  -- An item outlives the setting that produced it: it sits in the buffer for days and
+  -- is served weeks later, long after the pin that wrote it was cleared. Without this,
+  -- "are the DeepSeek items any good" is a question the database cannot answer.
+  gen_model      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS options (
@@ -121,6 +126,20 @@ CREATE TABLE IF NOT EXISTS session_plan (
   slot_kind   TEXT NOT NULL,
   served_at   TEXT,
   PRIMARY KEY (session_id, position)
+);
+
+-- Runtime settings that outlive a process but are not worth a redeploy — currently
+-- just the lab model pin (lib/lab.ts). Deliberately a key/value table rather than
+-- columns: this is not domain state, and anything that belongs in the domain model
+-- belongs in a table of its own.
+--
+-- It lives in the database rather than in memory because the standalone worker is a
+-- second process. A pin the server knew about and the worker did not would mean the
+-- items you look at and the items being written came from different models.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
 );
 
 -- Operational breadcrumbs. Not part of the domain model: this exists so a failure in

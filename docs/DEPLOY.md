@@ -382,6 +382,36 @@ the gate, and the deep items — where a missed flaw is expensive — keep the s
 validator. Past that, `economy` is a real change in item character, and `floor` gives up
 the uncharitable grader, which is invariant 9.
 
+### A second provider, and the switch that reaches it
+
+DeepSeek is supported alongside Anthropic — `deepseek-v4-pro`, their frontier model, and
+`deepseek-v4-flash` below it. Set `DEEPSEEK_API_KEY` in the service variables and the
+models become selectable; leave it unset and nothing changes.
+
+Selecting one is not a variable. Press **`g` then `l`** on any screen, or open **`/lab`**
+— behind the same password as everything else — and pin a model. The pin goes to *every*
+call site at once, overrides `GYM_STRATEGY` and every `GYM_MODEL_*`, lives in the
+database so the worker obeys it too, and is cleared from the same screen. It exists to
+answer "is this other model any good at this job" in the only way that answer means
+anything: real concepts, real items, and a look at what came out.
+
+Two operational consequences to know before flipping it on a deployment you use:
+
+- **The batch discount goes away while it is on.** The Batch API is Anthropic's and a
+  batch is submitted whole, so one foreign model id would fail every request in it.
+  Batching disables itself and the worker fills synchronously — full price per token,
+  against a per-token price that is roughly a hundredth of Opus on output, which is
+  where ~90% of this app's bill is. The buffer keeps filling either way.
+- **Effort means less than it does here.** DeepSeek's thinking mode has two levels:
+  `low` and `medium` arrive as `high`, `xhigh` as `max`. The item hot path normally runs
+  at `medium`, so it thinks harder — and takes longer per call — than the effort table
+  above would suggest.
+
+The health endpoint reports the pin above the routing it overrides, and every item
+records the model that wrote it in `items.gen_model`, so a bank filled during a
+comparison stays attributable long after the pin is gone. `GYM_DEEPSEEK_BASE_URL`
+redirects the calls if you front the API with a gateway.
+
 ### About older Opus models
 
 Worth saying plainly, because it is the natural thing to try: **an older Opus is not a

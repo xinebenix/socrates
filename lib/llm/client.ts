@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SchemaViolation, validateShape, wireSchema, type JsonSchema } from './schema';
+import { providerFor } from './providers';
+import { callDeepSeek } from './deepseek';
 
 export const DEFAULT_MODEL = 'claude-opus-5';
 export const MAX_SCHEMA_RETRIES = 3;
@@ -142,6 +144,79 @@ export const STRATEGIES: Record<string, ModelStrategy> = {
 
 export const DEFAULT_STRATEGY = 'shipped';
 
+/* -------------------------------------------------------------------- pin */
+
+/**
+ * The lab pin: one model, every call site, decided at runtime.
+ *
+ * Everything else here is configuration — read from the environment, fixed for the
+ * life of the process, and changed by a redeploy. That is the right shape for a
+ * setting you have decided on and the wrong shape entirely for a comparison you are
+ * in the middle of running. Trying a different model against a real concept means
+ * flipping it, generating a few items, looking at them, and flipping it back.
+ *
+ * So the pin is stored in the database (see lib/lab.ts) rather than the environment:
+ * it survives a restart, and the standalone worker — a separate process that never
+ * sees the server's memory — picks it up on its next tick.
+ *
+ * It is read through an injected source for the same reason the usage sink is. This
+ * module is used from scripts and tests that have no database, and it must not import
+ * one. The server installs the source in instrumentation.ts, the worker in
+ * workers/pregenerate.ts, and anything that installs nothing routes normally.
+ *
+ * Precedence: the pin beats the strategy, the depth rule and every GYM_MODEL_*
+ * variable. A test switch that a stale environment variable could silently defeat
+ * would be worse than no switch, because you would be reading the wrong model's work
+ * and calling it DeepSeek's. Because it wins so completely, it is also reported —
+ * /api/health, the lab screen, and a badge in the nav bar that only exists while the
+ * pin is set.
+ */
+export type ModelPinSource = () => string | null;
+
+/**
+ * Injected state lives on globalThis, not in module scope.
+ *
+ * This is not a style choice, it is a Next constraint discovered the hard way. The
+ * instrumentation hook and the route handlers are compiled into separate bundles, and
+ * a module imported by both is instantiated once *per bundle*. Anything installed at
+ * startup is therefore invisible to the route that later makes the call — and
+ * invisible in the worst way, with no error and no missing import, just a variable
+ * that is null in the copy doing the work. The same split is why /api/health reports
+ * the in-process worker as stopped while it is demonstrably running.
+ *
+ * `Symbol.for` keys a registry that is per-process rather than per-bundle, which is
+ * the scope both of these were always meant to have. The worker process and the tests
+ * are unaffected — there is only one bundle there, and this behaves exactly as a
+ * module-level variable did.
+ */
+const REGISTRY = Symbol.for('socrates.llm.injected');
+
+interface Injected {
+  usageSink: UsageSink | null;
+  modelPinSource: ModelPinSource | null;
+}
+
+function injected(): Injected {
+  const store = globalThis as unknown as Record<symbol, Injected | undefined>;
+  return (store[REGISTRY] ??= { usageSink: null, modelPinSource: null });
+}
+
+export function setModelPinSource(source: ModelPinSource | null): void {
+  injected().modelPinSource = source;
+}
+
+export function activePin(): string | null {
+  const source = injected().modelPinSource;
+  if (!source) return null;
+  try {
+    const pinned = source()?.trim();
+    return pinned ? pinned : null;
+  } catch {
+    // A pin that cannot be read is not a reason to fail a generation. Route normally.
+    return null;
+  }
+}
+
 export function strategyName(): string {
   const raw = process.env.GYM_STRATEGY?.trim().toLowerCase();
   return raw && raw in STRATEGIES ? raw : DEFAULT_STRATEGY;
@@ -167,15 +242,18 @@ export const DEFAULT_ITEM_MODEL = STRATEGIES[DEFAULT_STRATEGY].itemShallow;
 /**
  * Which model runs which call.
  *
- * Precedence: an explicit GYM_MODEL_<KIND> beats the strategy, and the strategy beats
- * GYM_MODEL. Depth chooses between a strategy's shallow and deep slots, and is
- * ignored once a kind has been named explicitly — someone who says
- * GYM_MODEL_ITEM=claude-opus-5 has said what they want at every depth.
+ * Precedence: the lab pin beats everything, an explicit GYM_MODEL_<KIND> beats the
+ * strategy, and the strategy beats GYM_MODEL. Depth chooses between a strategy's
+ * shallow and deep slots, and is ignored once a kind has been named explicitly —
+ * someone who says GYM_MODEL_ITEM=claude-opus-5 has said what they want at every depth.
  */
 export function modelFor(
   kind: 'item' | 'blueprint' | 'validate' | 'grade',
   depth?: number
 ): string {
+  const pinned = activePin();
+  if (pinned) return pinned;
+
   const explicit = process.env[`GYM_MODEL_${kind.toUpperCase()}`]?.trim();
   if (explicit) return explicit;
 
@@ -243,7 +321,9 @@ export function effortFor(
  */
 export function buildRequest(call: StructuredCall): Record<string, unknown> {
   return {
-    model: call.model ?? model(),
+    // The pin is applied here as well as in modelFor(), so it reaches the wire whatever
+    // route the call took to get here — including a call site that named no model.
+    model: activePin() ?? call.model ?? model(),
     max_tokens: call.maxTokens ?? 16000,
     // The system prompt is byte-identical across every call to a given site, so it is
     // worth caching. This is a smaller win than it sounds — output tokens are ~90% of
@@ -289,6 +369,11 @@ const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
 async function send(request: Record<string, unknown>): Promise<{ text: string; usage: Usage }> {
   if (transport) return { text: await transport(request), usage: NO_USAGE };
 
+  // The one place that knows a request can go somewhere other than Anthropic. Every
+  // layer above this holds the same canonical body whatever model it names; the
+  // translation happens on the way out. See lib/llm/providers.ts.
+  if (providerFor(String(request.model ?? '')) === 'deepseek') return callDeepSeek(request);
+
   // Streaming keeps a long generation from tripping the SDK's HTTP timeout.
   const stream = getClient().messages.stream(request as never);
   const message = await stream.finalMessage();
@@ -327,10 +412,14 @@ export type UsageSink = (record: {
   ms: number;
 }) => void;
 
-let usageSink: UsageSink | null = null;
-
+/**
+ * Registered per process, not per bundle — see the note on the registry above. The
+ * bug this fixes is quiet and expensive: every call made from a route handler, which
+ * is blueprint generation, inline session fills and all grading, was billed by the
+ * provider and recorded by nothing.
+ */
 export function setUsageSink(sink: UsageSink | null): void {
-  usageSink = sink;
+  injected().usageSink = sink;
 }
 
 /**
@@ -348,7 +437,7 @@ export async function structured<T>(call: StructuredCall): Promise<StructuredRes
 
       // Recorded per attempt, not per call: a schema retry is a second billed call,
       // and hiding that would make the accounting flatter than the invoice.
-      usageSink?.({
+      injected().usageSink?.({
         name: call.name,
         model: (request.model as string) ?? model(),
         usage,

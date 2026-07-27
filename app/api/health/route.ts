@@ -6,6 +6,8 @@ import { authConfig, healthTokenMatches, SESSION_COOKIE, verifySession } from '@
 import { opsCounts, recentOps } from '@/lib/ops';
 import { workerStatus } from '@/lib/pipeline/workerLoop';
 import { STRONG_FROM_DEPTH, effortFor, model, modelFor, strategyName } from '@/lib/llm/client';
+import { providerFor } from '@/lib/llm/providers';
+import { labStatus } from '@/lib/lab';
 import { bufferConcurrency, bufferTarget, refillThreshold } from '@/lib/pipeline/buffer';
 import { listConcepts } from '@/lib/db/queries';
 import { now } from '@/lib/clock';
@@ -75,6 +77,7 @@ export async function GET(req: Request) {
     config: {
       // Booleans, never values.
       anthropicKeyPresent: Boolean(process.env.ANTHROPIC_API_KEY),
+      deepseekKeyPresent: Boolean(process.env.DEEPSEEK_API_KEY),
       model: model(),
       passwordConfigured: Boolean(config.password),
       allowPublic: config.allowPublic,
@@ -109,6 +112,21 @@ export async function GET(req: Request) {
         .get(c.id) as { n: number };
       return { id: c.id, name: c.name, bufferedItems: buffered.n };
     });
+
+    // The lab pin overrides every routing decision below, so it is reported before
+    // them. A health check that showed the configured strategy while a pin was
+    // quietly sending everything somewhere else would be actively misleading.
+    const lab = labStatus(db);
+    report.lab = {
+      pinnedModel: lab.pin,
+      pinnedSince: lab.since,
+      provider: lab.pin ? providerFor(lab.pin) : null,
+      note: lab.pin
+        ? 'A model pin is set on /lab. It overrides GYM_STRATEGY and every GYM_MODEL_* variable, ' +
+          'and the batch discount is unavailable while it routes off Anthropic.'
+        : null,
+      itemsByModel: lab.itemsByModel,
+    };
 
     // Generation latency, so "it feels slow" can be checked rather than debated.
     report.latency = {

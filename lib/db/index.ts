@@ -34,6 +34,13 @@ export function migrate(db: Db): void {
   if (!usageCols.some((c) => c.name === 'batch')) {
     db.exec(`ALTER TABLE llm_usage ADD COLUMN batch INTEGER NOT NULL DEFAULT 0`);
   }
+
+  const itemCols = db.pragma(`table_info('items')`) as { name: string }[];
+  if (!itemCols.some((c) => c.name === 'gen_model')) {
+    // Nullable on purpose: items written before the column existed have no honest
+    // answer, and a default would invent one.
+    db.exec(`ALTER TABLE items ADD COLUMN gen_model TEXT`);
+  }
 }
 
 /** The process-wide handle used by API routes and the worker. */

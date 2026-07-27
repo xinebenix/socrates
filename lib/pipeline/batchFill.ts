@@ -56,7 +56,10 @@ interface ValPayloadItem {
   cellId: number;
   nodeId: number;
   depth: number;
+  /** The validator's model, for accounting. */
   model: string;
+  /** The generator's model, recorded on the item it wrote. Often not the same one. */
+  genModel: string;
   gen: McItemOut;
   order: number[];
   keyedPosition: number;
@@ -290,6 +293,7 @@ async function handleGenerateResults(
         nodeId: ctx.nodeId,
         depth: ctx.depth,
         model: String(request.model),
+        genModel: cell.model,
         gen,
         order,
         keyedPosition: order.indexOf(keyedIndex) + 1,
@@ -365,6 +369,9 @@ function handleValidateResults(
       gen: item.gen,
       order: item.order,
       verdict,
+      // A batch spans a restart, so this comes off the payload rather than from
+      // today's routing: the pin may well have been cleared since it was submitted.
+      genModel: item.genModel,
     });
     progress.itemsPersisted++;
   }

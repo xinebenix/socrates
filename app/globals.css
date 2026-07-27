@@ -1072,3 +1072,76 @@ em.accent {
 }
 .locale-opt:disabled { cursor: default; opacity: 0.6; }
 .locale-opt + .locale-opt { border-left: 1px solid var(--rule-soft); }
+
+/* ------------------------------------------------------------------- lab */
+
+/*
+ * The pin badge, and the switch that sets it.
+ *
+ * The badge is the loudest thing in the nav bar, which is the opposite of how the
+ * spend chip beside it is tuned — and deliberately so. Spend is ambient information
+ * you consult; a model pin is a temporary state that changes what every item in the
+ * app is made of, and forgetting it is on is the failure mode worth designing
+ * against. It exists only while the pin is set, so it is never ambient noise.
+ */
+.lab-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid rgba(var(--terra-rgb), 0.45);
+  background: rgba(var(--terra-rgb), 0.06);
+  border-radius: 3px;
+  font: 400 11px/1 var(--sans);
+  letter-spacing: 0.06em;
+  color: var(--terra);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.lab-badge:hover { border-color: var(--terra); color: var(--terra-deep); }
+
+.lab-badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--terra);
+  flex: none;
+}
+
+.lab-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.lab-option:hover:not(:disabled) { border-color: var(--rule-strong); }
+.lab-option:disabled { cursor: default; opacity: 0.65; }
+.lab-option.on {
+  border-color: rgba(var(--terra-rgb), 0.55);
+  background: rgba(var(--terra-rgb), 0.05);
+}
+
+.lab-option-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lab-option-id {
+  font: 400 15px/1.2 var(--mono);
+  color: var(--ink);
+}
+
+/* The description under the head row. A span, because it lives inside a button, so it
+   has to be told to be a block before a margin means anything. */
+.lab-option .note {
+  display: block;
+  margin-top: 6px;
+  text-wrap: pretty;
+}
+.lab-option.on .lab-option-id { color: var(--terra-deep); }

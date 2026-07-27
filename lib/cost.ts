@@ -34,6 +34,15 @@ export const DEFAULT_PRICES: Record<string, Price> = {
   'claude-fable-5': { input: 3, output: 15, cachedInput: 0.3 },
   'claude-haiku-4-5-20251001': { input: 1, output: 5, cachedInput: 0.1 },
 
+  // DeepSeek, priced after the cut of late May 2026 that made the launch discount
+  // permanent. Two things about these numbers are easy to misread. The output rate is
+  // roughly a hundredth of Opus, and output is ~90% of this app's bill — so a like for
+  // like comparison is not "somewhat cheaper", it is a different order of magnitude.
+  // And the cache-hit rate is not a typo: DeepSeek caches prefixes automatically and
+  // charges almost nothing to read them back.
+  'deepseek-v4-pro': { input: 0.435, output: 0.87, cachedInput: 0.003625 },
+  'deepseek-v4-flash': { input: 0.14, output: 0.28, cachedInput: 0.0028 },
+
   // Previous generation. Listed so that pinning an older model still produces a
   // costed line rather than a $0.00 one. Note that Opus has historically held the
   // same list price across generations — an older Opus buys latency and availability,

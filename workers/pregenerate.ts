@@ -10,15 +10,21 @@
 
 import { bufferTarget } from '../lib/pipeline/buffer';
 import { tick, workerIntervalMs, workerStatus } from '../lib/pipeline/workerLoop';
-import { setUsageSink } from '../lib/llm/client';
+import { setModelPinSource, setUsageSink } from '../lib/llm/client';
 import { budgetStatus, recordUsage, totalSpend } from '../lib/cost';
+import { labPin } from '../lib/lab';
 import { getDb } from '../lib/db';
 
 async function main(): Promise<void> {
   const interval = workerIntervalMs();
 
   // This process does most of the spending, so it does its own accounting rather
-  // than relying on the server's instrumentation hook, which it never runs.
+  // than relying on the server's instrumentation hook, which it never runs. Same for
+  // the lab pin: this is the process that writes most of the items, so a pin it could
+  // not see would be a pin that barely did anything. Read per call, so flipping the
+  // switch in the browser reaches the next generation rather than the next restart.
+  setModelPinSource(() => labPin(getDb()));
+
   setUsageSink((record) => {
     try {
       recordUsage(getDb(), record);
@@ -38,6 +44,11 @@ async function main(): Promise<void> {
     `[buffer] worker started — target ${bufferTarget()} ready items per plausibly-due cell, ` +
       `polling every ${Math.round(interval / 1000)}s`
   );
+
+  // Said out loud at startup because the pin is the one setting that is not in this
+  // process's environment, and everything it writes will carry it.
+  const pin = labPin(getDb());
+  if (pin) console.log(`[buffer] lab pin is set — every call site is routed to ${pin}`);
 
   let stopping = false;
   const stop = () => {

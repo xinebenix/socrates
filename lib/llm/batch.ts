@@ -12,7 +12,8 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { Usage } from './client';
+import { STRONG_FROM_DEPTH, modelFor, type Usage } from './client';
+import { supportsBatch } from './providers';
 
 export interface BatchRequest {
   customId: string;
@@ -105,10 +106,31 @@ export function getBatchTransport(): BatchTransport {
 }
 
 /**
+ * The models the speculative pipeline would submit: generation and validation, at both
+ * ends of the depth split.
+ */
+function batchPathModels(): string[] {
+  return [
+    modelFor('item', 1),
+    modelFor('item', STRONG_FROM_DEPTH),
+    modelFor('validate', 1),
+    modelFor('validate', STRONG_FROM_DEPTH),
+  ];
+}
+
+/**
  * On unless explicitly turned off. GYM_BATCH=0 restores the fully synchronous
  * worker, at double the price — useful only when diagnosing the batch path itself.
+ *
+ * It also turns itself off while any part of the speculative path is routed off
+ * Anthropic. The Batch API is Anthropic's, and a batch is submitted whole: one
+ * DeepSeek model id in the request list fails every request in it, including the ones
+ * that would have worked. Losing the discount is the correct trade — the worker falls
+ * through to the synchronous fill on the next tick and the buffer keeps filling, which
+ * is what a model comparison needs it to do.
  */
 export function batchingEnabled(): boolean {
   if (process.env.GYM_BATCH === '0') return false;
+  if (!batchPathModels().every(supportsBatch)) return false;
   return injected !== null || Boolean(process.env.ANTHROPIC_API_KEY);
 }

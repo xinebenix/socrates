@@ -26,6 +26,7 @@ npm run worker                    # in a second terminal — keeps the item buff
 | Variable | Default | |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | required, server-side only |
+| `DEEPSEEK_API_KEY` | — | only if you pin a DeepSeek model — see [The lab](#the-lab) |
 | `GYM_STRATEGY` | `shipped` | model assignment preset: `reference` · `shipped` · `split-gate` · `sonnet-gate` · `economy` · `floor` |
 | `GYM_MODEL` | `claude-opus-5` | what a strategy means by "the strong model" |
 | `GYM_MODEL_ITEM` · `_BLUEPRINT` · `_VALIDATE` · `_GRADE` | — | override one call site, beating the strategy |
@@ -36,6 +37,7 @@ npm run worker                    # in a second terminal — keeps the item buff
 | `GYM_LOOKAHEAD_CELLS` | `12` | cells the worker pre-generates for — the main cost dial |
 | `GYM_MONTHLY_BUDGET_USD` | — | pauses pre-generation past this estimate; sessions keep running |
 | `GYM_PRICES` | — | JSON price overrides, if the built-in table has gone stale |
+| `GYM_DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | only if you route DeepSeek through a gateway |
 | `GYM_EFFORT_ITEM` | `medium` | reasoning effort for item generation — the hot path |
 | `GYM_EFFORT_BLUEPRINT` · `_VALIDATE` · `_GRADE` | `high` | lower these only deliberately; see [docs/DEPLOY.md](docs/DEPLOY.md) |
 
@@ -47,7 +49,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 205 tests, no network
+npm test          # 245 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -281,6 +283,52 @@ and the interface says so.
 
 ---
 
+## The lab
+
+A second provider is supported — **DeepSeek**, including `deepseek-v4-pro`, their
+frontier model — and there is a switch inside the app for pointing everything at it
+for as long as it takes to judge the result.
+
+It is not in the navigation. Press **`g` then `l`** on any screen, or go to **`/lab`**
+directly. It sits behind the same password as the rest of the app; hidden is not the
+same as open.
+
+What the switch does is blunt on purpose: it pins **one model to every call site** —
+blueprint, item writing, validation, grading — overriding `GYM_STRATEGY` and every
+`GYM_MODEL_*` variable, including the blueprint that every named strategy protects. A
+comparison that quietly left one call site on the old model would produce a number
+about nothing. The pin is stored in the database rather than the environment, so it
+survives a restart and the background worker obeys it on its next tick. Clearing it
+takes effect on the next call; there is nothing to redeploy.
+
+Three things keep it honest:
+
+- **It is never invisible while it is on.** A badge appears in the nav bar naming the
+  pinned model, `/api/health` reports it above the routing it overrides, and every item
+  records its author in `items.gen_model` — so "whose work am I actually being asked?"
+  stays answerable weeks later, when the item finally comes up in a session and the pin
+  is long gone. The lab screen counts the bank by author.
+- **It can only pin a priced model.** Everything on the list has a row in the price
+  table, so the spend readout keeps meaning something while the switch is on. An
+  unknown model would estimate $0.00, which is the worst possible moment for a cost
+  readout to lie.
+- **It gives up the batch discount rather than break the buffer.** The Batch API is
+  Anthropic's, and a batch is submitted whole — one DeepSeek model id in the request
+  list fails every request in it. So batching turns itself off while any part of the
+  speculative path is routed elsewhere, and the worker fills synchronously instead.
+
+Two differences to expect from DeepSeek specifically. Its structured output mode
+guarantees valid JSON and nothing about the shape, so the schema travels in the prompt
+and the local `validateShape()` check — which already retried three times before
+failing a generation — is what enforces it. And its thinking mode has two levels rather
+than five: `low` and `medium` both arrive as `high`, `xhigh` as `max`. The item hot path
+normally runs at `medium`, so it does more thinking here than the effort settings
+suggest, which is worth knowing before reading either a latency graph or a bill. On
+price, the direction is not subtle: output is ~90% of what this app spends, and DeepSeek
+charges roughly a hundredth of Opus for it.
+
+---
+
 ## Design
 
 The visual language — parchment ground with rule stripes, EB Garamond for reading,
@@ -326,7 +374,7 @@ into the warning box — wraps instead of turning the page into a horizontal scr
 ## Tests
 
 ```bash
-npm test                 # 205 tests, no network, ~9s
+npm test                 # 245 tests, no network, ~9s
 npm run test:grader      # the grader regression set against the live model
 ```
 

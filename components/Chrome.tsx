@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { SpendSlot } from './SpendSlot';
+import { LabSlot } from './LabSlot';
 import { LocaleToggle } from './LocaleToggle';
 import { getDict } from '@/lib/i18n/server';
 
@@ -45,6 +46,10 @@ export async function Topbar({ subtitle, conceptId, right, spend = true }: Chrom
       )}
 
       <div className={conceptId != null ? 'topbar-end' : 'topbar-end push'}>
+        {/* Renders nothing at all unless a model pin is set — see SecretSwitch. It also
+            carries the key sequence that reaches the lab, which is why it is mounted
+            everywhere rather than only where the badge would show. */}
+        {spend && <LabSlot />}
         {spend && <SpendSlot />}
         {/* Present on the login page too: someone who cannot read the login form is
             exactly the person who needs the switch most. */}
