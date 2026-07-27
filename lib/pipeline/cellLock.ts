@@ -1,3 +1,4 @@
+import { processState } from '../processState';
 /**
  * Which cells are being generated right now, in this process.
  *
@@ -20,7 +21,7 @@ interface Entry {
   holders: number;
 }
 
-const generating = new Map<number, Entry>();
+const generating = processState('pipeline/cellLock', () => new Map<number, Entry>());
 
 /** Reserved before any await, so a concurrent pass cannot pick the same cell. */
 export function reserve(cellIds: Iterable<number>): void {
