@@ -47,6 +47,10 @@ It is needed once, to open an account, and never again to log in — see
 | `GYM_LOOKAHEAD_CELLS` | `12` | cells the worker pre-generates for — the main cost dial |
 | `GYM_MONTHLY_BUDGET_USD` | — | pauses pre-generation past this estimate; sessions keep running |
 | `GYM_PRICES` | — | JSON price overrides, if the built-in table has gone stale |
+| `GYM_TTS_APPID` · `_TOKEN` | — | a ByteDance (Volcengine) speech app; unset means no [hands-free mode](#hands-free) |
+| `GYM_TTS_CLUSTER` | `volcano_tts` | |
+| `GYM_TTS_VOICE_EN` · `_ZH` | `BV503_streaming` · `BV700_streaming` | any voice enabled on the app |
+| `GYM_TTS_SPEED` | `1` | speaking rate, 0.5–2 |
 | `GYM_EFFORT_ITEM` | `medium` | reasoning effort for item generation — the hot path |
 | `GYM_EFFORT_BLUEPRINT` · `_VALIDATE` · `_GRADE` | `high` | lower these only deliberately; see [docs/DEPLOY.md](docs/DEPLOY.md) |
 
@@ -58,7 +62,7 @@ GYM_DB=./data/demo.db npm run dev
 ```
 
 ```bash
-npm test          # 247 tests, no network
+npm test          # 289 tests, no network
 npm run typecheck
 npm run build
 ```
@@ -102,7 +106,7 @@ D6 is free response only — recognition cannot assess critique, and MC'ing it p
 items that look deep and test nothing.
 
 ```
-/app/api        concepts · blueprint · session · generate/item · grade/free · benchmark · stats · items
+/app/api        concepts · blueprint · session · generate/item · grade/free · benchmark · stats · items · tts
 /app/(ui)       login · signup · concepts · blueprint · session · dashboard · items · benchmark
 /lib/db         better-sqlite3 client, schema, queries, name normalisation
 /lib/auth.ts    session cookies, on Web Crypto so middleware and Node share one path
@@ -115,6 +119,8 @@ items that look deep and test nothing.
 /lib/policy     session assembly, interleaving, depth frontier
 /lib/analysis   item statistics, stem similarity
 /lib/pipeline   blueprint · generateItem · respond · session · buffer · benchmark · fork
+/lib/handsfree  what hands-free mode says, and what an utterance means — pure, no browser
+/lib/tts        ByteDance (Volcengine) synthesis client, server-side only
 /workers        pregenerate.ts
 ```
 
@@ -337,6 +343,46 @@ saves nothing. A current Sonnet is the lever that moves.
 
 ---
 
+## Hands-free
+
+<a id="hands-free"></a>
+
+Set `GYM_TTS_APPID` and `GYM_TTS_TOKEN` — a speech app from the ByteDance (Volcengine)
+console — and the session screen grows a **Hands-free** toggle. On, the session becomes
+a spoken loop built for the road: the question and each option are read aloud, the
+answer is spoken back, and the verdict and rationale are read in full before the next
+question begins. Eyes stay where they belong.
+
+The loop, per item: read the stem and options → *"Your answer — Alpha, Beta, Gamma, or
+Delta?"* → *"You chose Beta. Before it is recorded — guessing, unsure, or confident?"* →
+recorded → the verdict, the correct answer if missed, and the explanation, read aloud →
+a short ear for *"repeat"*, then on to the next item by itself. *"Pause"* holds the
+session; *"resume"* picks it back up. The D6 free-response item is dictated — speak the
+answer, say *"I am done"*, and the grader takes it from there. In the Chinese interface
+the whole exchange is in Chinese — 选B, 不确定, 下一题.
+
+**The invariants do not bend for the road.** Confidence is asked for out loud *before*
+anything is submitted, and the server would refuse the submission without it (invariant
+1). The controller drives exactly the callbacks the buttons drive, so nothing can mutate
+a response after feedback (invariant 2). *"I don't know"* is honoured only once the
+ten-second countdown has run out — said early, it is answered aloud rather than obeyed,
+because the attempt to retrieve is the part that teaches.
+
+Mechanically: the browser posts each spoken chunk to `/api/tts`; the server holds the
+ByteDance credentials, calls the synthesis endpoint, and returns MP3. The fixed prompts
+— the ones repeated on every item — are cached server-side, so a twenty-item session
+pays for its stems and rationales, not its scaffolding. Chunks are fetched one ahead of
+playback, so synthesis latency hides behind the sentence being spoken. Listening uses
+the browser's own speech recognition (the Web Speech API), stopped while audio plays so
+the engine does not hear itself. A browser without recognition still gets everything
+read aloud and says so on screen — answers are tapped, which is most of the benefit on
+a treadmill if not in a car.
+
+A word of sense: this is for content, not a substitute for attention. If a question
+deserves more thought than a red light allows, say *"pause"*.
+
+---
+
 ## What this does not tell you
 
 These are stated in the interface too, next to the numbers they qualify.
@@ -447,7 +493,7 @@ own background was answered with a redirect back to the login page.
 ## Tests
 
 ```bash
-npm test                 # 247 tests, no network, ~10s
+npm test                 # 289 tests, no network, ~10s
 npm run test:grader      # the grader regression set against the live model
 ```
 

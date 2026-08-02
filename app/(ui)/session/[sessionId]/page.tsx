@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { getDb } from '@/lib/db';
 import { getConcept, getSession } from '@/lib/db/queries';
 import { requireUser } from '@/lib/session';
+import { ttsConfig } from '@/lib/tts/bytedance';
 import { Topbar } from '@/components/Chrome';
 import { SessionRunner } from '@/components/SessionRunner';
 import { getDict } from '@/lib/i18n/server';
@@ -39,6 +40,9 @@ export default async function SessionPage({
           sessionId={sessionId}
           conceptId={concept.id}
           conceptName={concept.name}
+          // Whether the hands-free toggle renders at all. The credentials stay here;
+          // the browser only ever learns that speech is available, not how.
+          ttsEnabled={ttsConfig(process.env) !== null}
         />
       </main>
     </div>

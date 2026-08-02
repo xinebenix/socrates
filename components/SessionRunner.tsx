@@ -7,6 +7,7 @@ import { canSubmit } from '@/lib/ui/submitGuard';
 import { useDict } from '@/components/I18nProvider';
 import { fill } from '@/lib/i18n/dict';
 import { ItemCard, type FeedbackView, type OptionView } from './ItemCard';
+import { HandsFree } from './HandsFree';
 
 /**
  * How long the learner sits with an item before it can be given up on.
@@ -41,10 +42,13 @@ export function SessionRunner({
   sessionId,
   conceptId,
   conceptName,
+  ttsEnabled = false,
 }: {
   sessionId: number;
   conceptId: number;
   conceptName: string;
+  /** Server-side ByteDance TTS credentials exist, so the hands-free mode can render. */
+  ttsEnabled?: boolean;
 }) {
   const t = useDict();
   const [item, setItem] = useState<ServedItem | null>(null);
@@ -286,6 +290,42 @@ export function SessionRunner({
 
   const pct = progress.total > 0 ? Math.round((progress.answered / progress.total) * 100) : 0;
 
+  /**
+   * The hands-free controller drives the same setters and callbacks as the buttons, so
+   * every invariant enforced here and on the server holds for a spoken session too. It
+   * stays mounted on the end screen so the session's close is announced rather than
+   * the audio going silent mid-drive.
+   */
+  const handsFree = ttsEnabled ? (
+    <HandsFree
+      item={
+        item && !loading
+          ? {
+              itemId: item.itemId,
+              kind: item.kind,
+              stem: item.stem,
+              position: item.position,
+              total: item.total,
+              options: (item.options ?? []).map((o) => ({ id: o.id, text: o.text })),
+            }
+          : null
+      }
+      feedback={feedback}
+      selectedOptionId={selectedOptionId}
+      confidence={confidence}
+      freeText={freeText}
+      submitting={submitting}
+      canGiveUp={!feedback && item !== null && secondsLeft === 0}
+      done={done}
+      onSelectOption={setSelectedOptionId}
+      onConfidence={setConfidence}
+      onSubmit={() => void submit()}
+      onDontKnow={() => void dontKnow()}
+      onFreeText={setFreeText}
+      onNext={() => void load()}
+    />
+  ) : null;
+
   if (done) {
     return (
       <div className="column narrow rise">
@@ -310,6 +350,7 @@ export function SessionRunner({
             {t.session.backToConcepts}
           </Link>
         </div>
+        {handsFree}
       </div>
     );
   }
@@ -331,6 +372,8 @@ export function SessionRunner({
           })}
         </span>
       </div>
+
+      {handsFree}
 
       {error && (
         <div className="warnbox" style={{ marginBottom: 16 }}>

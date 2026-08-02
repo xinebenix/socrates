@@ -623,6 +623,46 @@ label.field-label {
   padding: 4px 0;
 }
 
+/* ----------------------------------------------------------- hands-free */
+
+/* The road-mode strip: one toggle and a status the driver can read at a glance —
+   or ignore entirely, which is the point. The dot breathes while listening; the
+   global reduced-motion rule above stills it like everything else. */
+.handsfree {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.hf-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 10.5px/1 var(--sans);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+
+.hf-status[data-status='listening'] .hf-dot {
+  background: var(--verd);
+  animation: so-breathe 1.6s ease-in-out infinite;
+}
+.hf-status[data-status='listening'] { color: var(--verd); }
+.hf-status[data-status='speaking'] .hf-dot { background: var(--terra); }
+.hf-status[data-status='speaking'] { color: var(--terra); }
+.hf-status[data-status='paused'] .hf-dot { background: var(--muted); }
+
 /* ------------------------------------------------------------- feedback */
 
 .feedback {
