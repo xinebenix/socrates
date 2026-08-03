@@ -121,6 +121,20 @@ that inherits everything, and defaults to `owner@localhost`.
 `GYM_DB=/data/gym.db` matters. If it stays at the default `./data/gym.db` the database
 lands on the container filesystem and disappears on the next deploy.
 
+Two more, if you want the hands-free mode — the session read aloud and answered by
+voice, for training on the road:
+
+```
+GYM_TTS_APPID=<from the Volcengine console>
+GYM_TTS_TOKEN=<from the Volcengine console>
+```
+
+Both from a speech app at console.volcengine.com → 语音技术 → 语音合成. Leave them out and
+the feature is simply absent: no toggle on the session screen, and `/api/tts` answers 503.
+Voice, cluster and speaking rate have working defaults — see `.env.example` for those.
+Note that the browser half needs a secure context, so it works on the Railway domain and
+on `localhost`, but not over plain HTTP to an IP address.
+
 ## 4. Attach the volume — do not skip this
 
 **Service → Settings → Volumes → Add Volume**, mount path exactly:
